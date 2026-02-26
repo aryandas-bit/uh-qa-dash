@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Dashboard palette */
+  --uh-purple: #6d4df5;
+  --uh-cyan: #0ea5e9;
+  --uh-dark: #101828;
+  --uh-dark-secondary: #f3f5fb;
+  --uh-dark-tertiary: #e4e9f4;
+  --uh-success: #10b981;
+  --uh-warning: #f59e0b;
+  --uh-error: #ef4444;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  background: #dfe3ef;
+  color: #1f2937;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+  width: 100%;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(100, 116, 139, 0.08);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(109, 77, 245, 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(109, 77, 245, 0.5);
+}
+
+/* Utility classes */
+@layer components {
+  .card {
+    @apply bg-white border border-slate-200 rounded-2xl p-6 shadow-sm;
+  }
+
+  .btn-primary {
+    @apply bg-gradient-to-r from-uh-purple to-uh-cyan text-white font-semibold px-6 py-3 rounded-xl;
+    @apply hover:shadow-lg hover:shadow-uh-purple/25 hover:-translate-y-0.5 transition-all duration-300;
+  }
+
+  .btn-secondary {
+    @apply bg-slate-100 text-slate-700 font-medium px-4 py-2 rounded-lg;
+    @apply hover:bg-slate-200 transition-all duration-200;
+  }
+
+  .input {
+    @apply bg-white border border-slate-200 rounded-lg px-4 py-2 text-slate-700;
+    @apply focus:border-uh-purple focus:ring-2 focus:ring-uh-purple/20 focus:outline-none;
+    @apply placeholder:text-slate-400 transition-all duration-200;
+  }
+
+  .score-badge {
+    @apply px-3 py-1 rounded-full text-sm font-semibold;
+  }
+
+  .score-good {
+    @apply bg-uh-success/20 text-uh-success;
+  }
+
+  .score-warning {
+    @apply bg-uh-warning/20 text-uh-warning;
+  }
+
+  .score-bad {
+    @apply bg-uh-error/20 text-uh-error;
+  }
+}
