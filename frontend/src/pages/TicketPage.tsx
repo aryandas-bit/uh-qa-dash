@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, User, Bot, Headphones, MessageSquare, Sparkles, AlertTriangle, CheckCircle, TrendingUp, Loader2, History, Users, RefreshCw, XCircle, Clock } from 'lucide-react';
@@ -141,12 +141,18 @@ export default function TicketPage() {
   const ticket = ticketData?.data?.ticket;
   const messages = ticket?.MESSAGES_JSON ? parseMessages(ticket.MESSAGES_JSON) : [];
 
-  const handleAnalyze = async () => {
+  // Auto-analyze when ticket loads
+  useEffect(() => {
+    if (!ticket || analysis || isAnalyzing) return;
+    handleAnalyze(false);
+  }, [ticket]);
+
+  const handleAnalyze = async (forceRefresh = true) => {
     if (!id) return;
     setIsAnalyzing(true);
     setAnalysisError(null);
     try {
-      const response = await analysisApi.getTicketAnalysis(id, true);
+      const response = await analysisApi.getTicketAnalysis(id, forceRefresh);
       setAnalysis(response.data.analysis);
       setCustomerHistory(response.data.customerHistory || []);
     } catch (error: any) {
@@ -252,7 +258,7 @@ export default function TicketPage() {
         </div>
         {/* Analyze Button */}
         <button
-          onClick={handleAnalyze}
+          onClick={() => handleAnalyze(true)}
           disabled={isAnalyzing}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-uh-purple to-uh-cyan hover:opacity-90 disabled:opacity-50 transition-all font-medium"
         >
@@ -260,6 +266,11 @@ export default function TicketPage() {
             <>
               <Loader2 size={18} className="animate-spin" />
               Analyzing...
+            </>
+          ) : analysis ? (
+            <>
+              <RefreshCw size={18} />
+              Re-analyze
             </>
           ) : (
             <>

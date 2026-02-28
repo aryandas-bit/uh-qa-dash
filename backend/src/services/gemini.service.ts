@@ -53,12 +53,9 @@ const ANALYSIS_PROMPT = `You are a QA analyst for Ultrahuman customer support. A
 IMPORTANT PRINCIPLES:
 1. Only deduct points for CLEAR, OBVIOUS violations. Do NOT deduct for minor, borderline, or subjective issues. If the agent did a reasonable job, give them the benefit of the doubt. A well-handled ticket should score 100/100.
 2. NEVER invent or assume issues that are not explicitly stated in the conversation. Only reference facts, problems, and topics that are actually present in the messages. Do NOT infer physical defects, complaints, or issues from context clues — only use what is directly written.
-3. The bot NOTE at the start of a conversation is a summary of PREVIOUS tickets, not the current issue. The current issue is what the customer says in this conversation.
 
 ## Context Rules (read before scoring):
-- The bot NOTE at the start is a HISTORY LOG of what happened in PREVIOUS tickets. It is NOT a list of tasks for the current agent. Do NOT penalise the agent for not addressing things that are only mentioned in the NOTE but NOT raised by the customer in this conversation. If the customer didn't ask about it in this chat, the agent is not expected to handle it.
-- The agent's job in the current conversation is to address ONLY what the customer explicitly raises in this chat. Everything else in the NOTE is already resolved context.
-- If the bot note already documented the customer's issue, the agent does NOT need to re-probe — they can read it from the note.
+- The agent's job is to address ONLY what the customer explicitly raises in this conversation.
 - Agent response time should be measured from when the agent JOINED the chat, not from when the customer first contacted the bot.
 - If the customer's final message indicates satisfaction (e.g. "thank you", "that helps", "amazing"), the chat was resolved successfully regardless of whether the agent sent a formal farewell.
 - The system automatically closes tickets after the agent provides a resolution and leaves — this is NOT abandonment.
@@ -69,7 +66,6 @@ IMPORTANT PRINCIPLES:
 ONLY deduct if there is a CLEAR violation:
 - Agent completely ignored greeting (no "hi", "hello", or any welcoming line at all)
 - First response was totally irrelevant to the stated issue
-- Agent took an unreasonably long time to respond AFTER joining (>5 minutes with no message)
 
 ### 2. Process Miss — max -40 points
 ONLY deduct if there is a CLEAR violation:
@@ -82,10 +78,12 @@ ONLY deduct if there is a CLEAR violation:
 
 ### 3. Chat Handling — max -30 points
 ONLY deduct if there is a CLEAR violation:
-- Response gaps of 10+ minutes with no acknowledgment
 - Obvious typos or grammar mistakes that affect readability or professionalism
 - Clearly robotic/copy-paste response with zero personalisation that doesn't fit the situation
 - Clear lack of empathy when the customer was visibly upset or frustrated
+
+DO NOT deduct for:
+- Repeating information that the customer explicitly asked about again — answering a direct question is always correct, even if the answer was already given earlier in the conversation
 
 ### 4. Closing — max -15 points
 ONLY deduct if there is a CLEAR violation:
@@ -316,13 +314,12 @@ function formatMessagesForPrompt(messages: any[]): string {
     return 'No messages available for analysis.';
   }
 
-  return messages.map((msg, idx) => {
+  return messages.filter((msg) => msg.s !== 'N').map((msg, idx) => {
     // Handle the s/m/t format from the database
     let sender = 'unknown';
     if (msg.s === 'U') sender = 'CUSTOMER';
     else if (msg.s === 'A') sender = 'AGENT';
     else if (msg.s === 'B') sender = 'BOT';
-    else if (msg.s === 'N') sender = 'NOTE';
     else if (msg.sender_type) sender = msg.sender_type.toUpperCase();
 
     // Get the message content
