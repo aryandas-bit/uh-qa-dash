@@ -1,7 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { format, subDays } from 'date-fns';
 import {
   Users,
   ChevronRight,
@@ -20,6 +19,7 @@ import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { agentsApi, ticketsApi } from '../api/client';
 import type { DateMode } from '../api/client';
+import { formatDate, subDays } from '../utils/date';
 
 export default function DashboardPage() {
   const [selectedDate, setSelectedDate] = useState('');
@@ -35,7 +35,7 @@ export default function DashboardPage() {
 
   // Auto-select the latest available date once loaded
   const latestDate = datesData?.data?.dates?.[0];
-  const effectiveDate = selectedDate || latestDate || format(subDays(new Date(), 2), 'yyyy-MM-dd');
+  const effectiveDate = selectedDate || latestDate || formatDate(subDays(new Date(), 2), 'yyyy-MM-dd');
 
   // Fetch agent daily data
   const { data: agentsData, isLoading: agentsLoading } = useQuery({

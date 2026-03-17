@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
-import { format, subDays, addDays, isAfter, startOfDay } from 'date-fns';
+import { addDays, formatDate, isAfter, startOfDay, subDays } from '../../utils/date';
 
 interface DatePickerProps {
   selectedDate: string;
@@ -20,12 +20,12 @@ export default function DatePicker({
   const canGoForward = !isAfter(addDays(currentDate, 1), today);
 
   const handlePrevDay = () => {
-    onDateChange(format(subDays(currentDate, 1), 'yyyy-MM-dd'));
+    onDateChange(formatDate(subDays(currentDate, 1), 'yyyy-MM-dd'));
   };
 
   const handleNextDay = () => {
     if (canGoForward) {
-      onDateChange(format(addDays(currentDate, 1), 'yyyy-MM-dd'));
+      onDateChange(formatDate(addDays(currentDate, 1), 'yyyy-MM-dd'));
     }
   };
 
@@ -47,12 +47,12 @@ export default function DatePicker({
         className="relative flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg min-w-[180px] justify-center hover:bg-slate-50 hover:border-uh-purple/40 transition-all cursor-pointer"
       >
         <Calendar size={16} className="text-uh-purple" />
-        <span className="font-medium">{format(currentDate, 'MMM dd, yyyy')}</span>
+        <span className="font-medium">{formatDate(currentDate, 'MMM dd, yyyy')}</span>
         <input
           ref={inputRef}
           type="date"
           value={selectedDate}
-          max={format(today, 'yyyy-MM-dd')}
+          max={formatDate(today, 'yyyy-MM-dd')}
           onChange={handleInputChange}
           className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
           tabIndex={-1}

@@ -1,16 +1,16 @@
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Mail, Ticket, Clock, CheckCircle, AlertTriangle, Calendar, CalendarCheck } from 'lucide-react';
-import { format, subDays } from 'date-fns';
 import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { agentsApi } from '../api/client';
 import type { DateMode } from '../api/client';
+import { formatDate, subDays } from '../utils/date';
 
 export default function AgentDetailPage() {
   const { email } = useParams<{ email: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const date = searchParams.get('date') || format(subDays(new Date(), 2), 'yyyy-MM-dd');
+  const date = searchParams.get('date') || formatDate(subDays(new Date(), 2), 'yyyy-MM-dd');
   const dateMode = (searchParams.get('dateMode') as DateMode) || 'activity';
 
   const decodedEmail = decodeURIComponent(email || '');
