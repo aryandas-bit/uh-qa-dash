@@ -48,72 +48,108 @@ export interface QAAnalysis {
   summary: string;
 }
 
-const ANALYSIS_PROMPT = `You are a QA analyst for Ultrahuman customer support. Analyze this support conversation and score it using the rubric below.
+const ANALYSIS_PROMPT = `You are a QA analyst for Ultrahuman customer support. Score this ticket using the CX audit standard taken from the manual QA sheet.
 
 IMPORTANT PRINCIPLES:
-1. Only deduct points for CLEAR, OBVIOUS violations. Do NOT deduct for minor, borderline, or subjective issues. If the agent did a reasonable job, give them the benefit of the doubt. A well-handled ticket should score 100/100.
-2. NEVER invent or assume issues that are not explicitly stated in the conversation. Only reference facts, problems, and topics that are actually present in the messages. Do NOT infer physical defects, complaints, or issues from context clues — only use what is directly written.
+1. Use the sheet's scoring behavior, not a generic QA rubric.
+2. Only mark an issue when it is clearly supported by the ticket messages, timestamps, internal notes, current tags, SOP, or customer history shown below.
+3. Give the agent credit for reasonable handling. Do not invent misses, hidden intent, or unsupported SOP failures.
+4. Prefer the common score anchors used in the audit sheet: 100, 85, 80, 50, 35, 20, and 0.
 
 ## Context Rules (read before scoring):
-- The agent's job is to address ONLY what the customer explicitly raises in this conversation.
-- Agent response time should be measured from when the agent JOINED the chat, not from when the customer first contacted the bot.
-- If the customer's final message indicates satisfaction (e.g. "thank you", "that helps", "amazing"), the chat was resolved successfully regardless of whether the agent sent a formal farewell.
-- The system automatically closes tickets after the agent provides a resolution and leaves — this is NOT abandonment.
+- Score first response timing from when the agent joined the chat, not from when the bot first engaged the customer.
+- The agent only needs to address issues actually raised in this conversation.
+- If the customer's final message shows satisfaction or acceptance, treat the issue as resolved even if the agent did not send a textbook farewell.
+- System auto-close after a valid resolution is NOT abandonment.
+- Internal notes can contain context already collected before the agent replied. Do not penalize lack of probing if those details were already captured in the notes.
 
-## Scoring Rubric (start at 100 points, deduct per section):
+## Sheet-Aligned QC Rubric
 
-### 1. Opening Issues — max -15 points
-ONLY deduct if there is a CLEAR violation:
-- Agent completely ignored greeting (no "hi", "hello", or any welcoming line at all)
-- First response was totally irrelevant to the stated issue
+### 1. Opening issues -> category "opening"
+Default anchor when opening is the only problem: score 85 (-15).
+Apply when there is a clear opening miss such as:
+- Greetings not used
+- Late first response / FR missed
+- Did not acknowledge the concern
+- Irrelevant first response
 
-### 2. Process Miss — max -40 points
-ONLY deduct if there is a CLEAR violation:
-- Agent gave clearly wrong or harmful information
-- Agent gave only a partial fix when the full resolution was obviously available
-- Agent failed to investigate when key context was available and they ignored it
-- Agent skipped an obvious SOP step that was directly applicable
-- Agent lacked probing ONLY when critical missing info wasn't captured by the bot note and the agent didn't ask
-- Agent completely failed to provide any resolution
+### 2. Response quality / process issues -> category "process"
+Default anchor when a pure process issue exists: score 50 (-50).
+Apply when the agent clearly made a workflow or handling miss such as:
+- Wrong tag used / tag not used
+- Incorrect resolution or irrelevant response
+- Protocol / SOP miss
+- Poor investigation or missed relevant customer details
+- Missing important information or lack of elaboration
+- Lack of probing or unnecessary probing
+- Delayed response after agent joined
+- Partial resolution
+- Resolution not provided
+- Not checking previous conversation when clearly needed
 
-### 3. Chat Handling — max -30 points
-ONLY deduct if there is a CLEAR violation:
-- Obvious typos or grammar mistakes that affect readability or professionalism
-- Clearly robotic/copy-paste response with zero personalisation that doesn't fit the situation
-- Clear lack of empathy when the customer was visibly upset or frustrated
+### 3. Grammar and tonality -> category "chat_handling"
+Default anchor when this is the only problem: score 80 (-20).
+Apply for:
+- Incorrect or incomplete sentence formation
+- Spelling, punctuation, or typo issues
+- Robotic response
+- Over-empathy or lack of empathy when it clearly affects quality
 
-DO NOT deduct for:
-- Repeating information that the customer explicitly asked about again — answering a direct question is always correct, even if the answer was already given earlier in the conversation
+### 4. Closing issues -> category "closing"
+Default anchor when closing is the only problem: score 85 (-15).
+Apply for:
+- Didn't send closing response
+- Didn't mark conversation as done
+- Didn't share the rating / CSAT link
+- Did not offer further assistance
+- Missing or improper resolution summary during closure
 
-### 4. Closing — max -15 points
-ONLY deduct if there is a CLEAR violation:
-- Agent closed the chat while the customer's issue was clearly UNRESOLVED
-- Agent gave no resolution at all before closing
-- DO NOT deduct if: the customer said thank you / seemed satisfied, even if the agent didn't send a formal "is there anything else?" message
-- DO NOT deduct if the system auto-closed after the agent gave a resolution
+### 5. Fatal / intent -> category "fatal"
+Any fatal issue forces score 0.
+Apply only for clear critical failures such as:
+- Wrong resolution
+- Resolving without resolution
+- Closing a workable chat
+- Wrong SOP
+- Not following the set of protocols / SOP in a severe way
+- Not checking previous chat when clearly required for resolution
+- Repeating canned response instead of solving the issue
+- Sharing internal content with the customer
+- Rude or abusive behavior
+- Flagged incorrectly
 
-### 5. Fatal — score becomes 0 immediately
-Apply ONLY if one of these critical violations CLEARLY occurred:
-- Chat autoclosed WITHOUT any resolution being given (agent abandoned without helping)
-- Rude/Abusive Behavior toward customer
-- Manually resolved a workable chat without actually solving it
-- Wrong refund initiated
-- Repeating canned response without addressing the actual issue
-- Not checking previous chat history when it was clearly and obviously relevant
-- Wrong resolution given that could cause customer harm or confusion
-- Sharing an internal update/screenshot with the customer
-- Wrong SOP applied
-- Flagged Incorrectly
+## How to combine issues
+- Start from 100.
+- Use the sheet's anchored deductions:
+  - opening: usually -15
+  - process / response quality: usually -50
+  - chat handling / grammar: usually -20
+  - closing: usually -15
+  - fatal: score becomes 0
+- When multiple non-fatal categories appear, combine the anchored deductions and clamp the result to 0-100.
+- This means common combinations should often land at:
+  - opening only -> 85
+  - grammar only -> 80
+  - process only -> 50
+  - opening + process -> 35
+  - process + closing + opening -> 20
+  - any fatal -> 0
+- Do not create tiny custom deductions like -5 or -7 unless the evidence is unusually specific and the sheet pattern strongly supports it. Prefer the standard anchors.
 
-## Detecting Abandoned Tickets (be careful — do NOT misclassify):
+## Tag and closure guidance from the audit sheet
+- If current tags shown below are clearly missing, wrong, stale, or unresolved for the case, treat that as a process miss.
+- Missing CSAT link, not marking done, or no proper closing response are closing misses, not fatal by themselves.
+- APTC / associate-fault context supports why the miss matters, but it is not a separate deduction category in the JSON.
+
+## Detecting Abandoned Tickets (be careful - do NOT misclassify):
 An agent ABANDONED the chat only if ALL of these are true:
-1. The agent's last message was a question OR the agent gave no response at all
-2. The customer's last message shows the issue is still unresolved (complaint, question, waiting)
-3. The ticket then closed without resolution
+1. The agent's last meaningful message was a question OR the agent gave no meaningful response at all
+2. The customer's final state still shows the issue is unresolved
+3. The ticket then closed without a resolution
 
 DO NOT mark as abandoned if:
-- The agent gave a resolution/instructions and then left (even without a formal goodbye)
-- The customer's last message is positive (thank you, ok, got it, etc.)
+- The agent gave a resolution or next steps and then left
+- The customer's last message is positive or accepting
 - The system auto-closed after a proper resolution was given
 
 ## IMPORTANT - Customer History Context:
@@ -134,6 +170,10 @@ If this is a repeat issue, the agent SHOULD:
 ## Relevant SOP for this ticket:
 {sopContent}
 
+## Ticket Metadata:
+Category / Group: {category}
+Current Tags: {tags}
+
 ## Current Conversation:
 {messages}
 
@@ -141,7 +181,7 @@ Analyze the conversation and respond ONLY with valid JSON in this exact format (
 {
   "qaScore": <number 0-100>,
   "deductions": [
-    { "category": "<opening|process|chat_handling|closing|fatal>", "points": <negative number, max -15 for opening, -40 for process, -30 for chat_handling, -15 for closing, fatal sets score to 0>, "reason": "<specific sub-violation from the rubric above>" }
+    { "category": "<opening|process|chat_handling|closing|fatal>", "points": <negative number using the sheet anchors when possible: opening -15, process -50, chat_handling -20, closing -15, fatal makes total score 0>, "reason": "<specific sub-violation from the rubric above>" }
   ],
   "sopCompliance": {
     "score": <number 0-100>,
@@ -201,11 +241,15 @@ export async function analyzeTicket(
 
   const formattedMessages = formatMessagesForPrompt(messages);
   const formattedHistory = formatCustomerHistory(customerHistory || []);
+  const formattedTags = formatTagsForPrompt(tags);
+  const formattedCategory = category?.trim() || 'Unknown';
 
   // Build the prompt
   const prompt = ANALYSIS_PROMPT
     .replace('{customerHistory}', formattedHistory)
     .replace('{sopContent}', sopContent)
+    .replace('{category}', formattedCategory)
+    .replace('{tags}', formattedTags)
     .replace('{messages}', formattedMessages);
 
   try {
@@ -314,12 +358,13 @@ function formatMessagesForPrompt(messages: any[]): string {
     return 'No messages available for analysis.';
   }
 
-  return messages.filter((msg) => msg.s !== 'N').map((msg, idx) => {
-    // Handle the s/m/t format from the database
+  return messages.map((msg, idx) => {
+    // Preserve internal notes because they can contain context already captured before the agent replies.
     let sender = 'unknown';
     if (msg.s === 'U') sender = 'CUSTOMER';
     else if (msg.s === 'A') sender = 'AGENT';
     else if (msg.s === 'B') sender = 'BOT';
+    else if (msg.s === 'N') sender = 'INTERNAL_NOTE';
     else if (msg.sender_type) sender = msg.sender_type.toUpperCase();
 
     // Get the message content
@@ -349,6 +394,23 @@ function formatMessagesForPrompt(messages: any[]): string {
 
     return `[${idx + 1}] ${sender}: ${content}${timestamp ? ` (${timestamp})` : ''}`;
   }).filter(Boolean).join('\n\n');
+}
+
+function formatTagsForPrompt(tags?: string): string {
+  if (!tags || tags.trim() === '') {
+    return 'No tags present.';
+  }
+
+  try {
+    const parsed = JSON.parse(tags);
+    if (Array.isArray(parsed)) {
+      return parsed.join(', ') || 'No tags present.';
+    }
+  } catch {
+    // Keep raw tag string if it is not JSON.
+  }
+
+  return tags;
 }
 
 function formatSOPForPrompt(sop: any): string {
