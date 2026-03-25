@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, User, Bot, Headphones, MessageSquare, Sparkles, AlertTriangle, CheckCircle, TrendingUp, Loader2, History, Users, RefreshCw, XCircle, Clock } from 'lucide-react';
+import { ArrowLeft, User, Bot, Headphones, MessageSquare, Sparkles, AlertTriangle, CheckCircle, TrendingUp, Loader2, History, Users, RefreshCw, XCircle, Clock, ThumbsUp, Flag, RotateCcw } from 'lucide-react';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { ticketsApi, analysisApi } from '../api/client';
 
@@ -21,6 +21,13 @@ interface CustomerTicketHistory {
   status: string;
   priority: string;
   csat?: number;
+}
+
+interface QAReview {
+  status: 'approved' | 'flagged';
+  note: string | null;
+  reviewerName: string | null;
+  reviewedAt: string;
 }
 
 interface QAAnalysis {
@@ -130,6 +137,11 @@ export default function TicketPage() {
   const [customerHistory, setCustomerHistory] = useState<CustomerTicketHistory[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [review, setReview] = useState<QAReview | null>(null);
+  const [isReviewing, setIsReviewing] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState<'approved' | 'flagged' | null>(null);
+  const [noteInput, setNoteInput] = useState('');
+  const [reviewerName, setReviewerName] = useState(() => localStorage.getItem('qa_reviewer_name') || '');
 
   // Fetch ticket details
   const { data: ticketData, isLoading } = useQuery({
@@ -155,10 +167,58 @@ export default function TicketPage() {
       const response = await analysisApi.getTicketAnalysis(id, forceRefresh);
       setAnalysis(response.data.analysis);
       setCustomerHistory(response.data.customerHistory || []);
+      setReview(response.data.review || null);
     } catch (error: any) {
       setAnalysisError(error.response?.data?.error || 'Failed to analyze ticket');
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const openReviewModal = (status: 'approved' | 'flagged') => {
+    if (!id) return;
+    // Toggle off if same status clicked again
+    if (review?.status === status) {
+      handleClearReview();
+      return;
+    }
+    setNoteInput(review?.note || '');
+    setPendingStatus(status);
+  };
+
+  const handleClearReview = async () => {
+    if (!id) return;
+    setIsReviewing(true);
+    try {
+      await analysisApi.clearReview(id);
+      setReview(null);
+      setPendingStatus(null);
+      setNoteInput('');
+    } catch (error: any) {
+      console.error('Failed to clear review:', error);
+    } finally {
+      setIsReviewing(false);
+    }
+  };
+
+  const handleSubmitReview = async () => {
+    if (!id || !pendingStatus) return;
+    setIsReviewing(true);
+    // Persist reviewer name for future reviews
+    if (reviewerName.trim()) localStorage.setItem('qa_reviewer_name', reviewerName.trim());
+    try {
+      const response = await analysisApi.reviewTicket(
+        id, pendingStatus,
+        noteInput.trim() || undefined,
+        reviewerName.trim() || undefined
+      );
+      setReview(response.data.review);
+      setPendingStatus(null);
+      setNoteInput('');
+    } catch (error: any) {
+      console.error('Failed to save review:', error);
+    } finally {
+      setIsReviewing(false);
     }
   };
 
@@ -295,16 +355,151 @@ export default function TicketPage() {
       {analysis && (
         <div className="mb-6 space-y-4">
           {/* QA Score Card */}
-          <div className="card">
+          <div className={`card ${
+            review?.status === 'approved'
+              ? 'ring-2 ring-uh-success/50'
+              : review?.status === 'flagged'
+              ? 'ring-2 ring-uh-error/50'
+              : ''
+          }`}>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold flex items-center gap-2">
                 <Sparkles size={20} className="text-uh-purple" />
                 AI Analysis
+                {review && (
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1 ${
+                    review.status === 'approved'
+                      ? 'bg-uh-success/20 text-uh-success'
+                      : 'bg-uh-error/20 text-uh-error'
+                  }`}>
+                    {review.status === 'approved' ? <ThumbsUp size={11} /> : <Flag size={11} />}
+                    {review.status === 'approved' ? 'Approved' : 'Flagged'}
+                    {review.reviewerName && <span className="opacity-70">by {review.reviewerName}</span>}
+                  </span>
+                )}
               </h2>
-              <div className={`text-4xl font-bold ${getScoreColor(analysis.qaScore)}`}>
-                {analysis.qaScore}/100
+              <div className="flex items-center gap-3">
+                {/* Approve / Flag buttons */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => openReviewModal('approved')}
+                    disabled={isReviewing}
+                    title={review?.status === 'approved' ? 'Remove approval' : 'Approve this QC analysis'}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-50 ${
+                      review?.status === 'approved'
+                        ? 'bg-uh-success text-white hover:bg-uh-success/80'
+                        : 'bg-uh-success/10 text-uh-success hover:bg-uh-success/20 border border-uh-success/30'
+                    }`}
+                  >
+                    {isReviewing && review?.status !== 'approved' ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : review?.status === 'approved' ? (
+                      <RotateCcw size={14} />
+                    ) : (
+                      <ThumbsUp size={14} />
+                    )}
+                    {review?.status === 'approved' ? 'Undo' : 'Approve'}
+                  </button>
+                  <button
+                    onClick={() => openReviewModal('flagged')}
+                    disabled={isReviewing}
+                    title={review?.status === 'flagged' ? 'Remove flag' : 'Flag this QC as inaccurate'}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-50 ${
+                      review?.status === 'flagged'
+                        ? 'bg-uh-error text-white hover:bg-uh-error/80'
+                        : 'bg-uh-error/10 text-uh-error hover:bg-uh-error/20 border border-uh-error/30'
+                    }`}
+                  >
+                    {isReviewing && review?.status !== 'flagged' ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : review?.status === 'flagged' ? (
+                      <RotateCcw size={14} />
+                    ) : (
+                      <Flag size={14} />
+                    )}
+                    {review?.status === 'flagged' ? 'Undo' : 'Flag'}
+                  </button>
+                </div>
+                <div className={`text-4xl font-bold ${getScoreColor(analysis.qaScore)}`}>
+                  {analysis.qaScore}/100
+                </div>
               </div>
             </div>
+
+            {/* Notes input modal (inline) */}
+            {pendingStatus && (
+              <div className={`mb-4 p-4 rounded-xl border ${
+                pendingStatus === 'approved'
+                  ? 'bg-uh-success/5 border-uh-success/30'
+                  : 'bg-uh-error/5 border-uh-error/30'
+              }`}>
+                <p className="text-sm font-medium mb-3 flex items-center gap-2">
+                  {pendingStatus === 'approved' ? <ThumbsUp size={14} className="text-uh-success" /> : <Flag size={14} className="text-uh-error" />}
+                  <span className={pendingStatus === 'approved' ? 'text-uh-success' : 'text-uh-error'}>
+                    {pendingStatus === 'approved' ? 'Approving QC analysis' : 'Flagging QC analysis as inaccurate'}
+                  </span>
+                </p>
+                <input
+                  type="text"
+                  value={reviewerName}
+                  onChange={e => setReviewerName(e.target.value)}
+                  placeholder="Your name *"
+                  className="w-full text-sm border border-slate-200 rounded-lg p-2 mb-2 focus:outline-none focus:ring-2 focus:ring-uh-purple/40 bg-white"
+                />
+                <textarea
+                  value={noteInput}
+                  onChange={e => setNoteInput(e.target.value)}
+                  placeholder={pendingStatus === 'flagged' ? 'Why is this analysis inaccurate? (optional)' : 'Add a note (optional)'}
+                  rows={3}
+                  className="w-full text-sm border border-slate-200 rounded-lg p-2 resize-none focus:outline-none focus:ring-2 focus:ring-uh-purple/40 bg-white"
+                />
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    onClick={handleSubmitReview}
+                    disabled={isReviewing}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-white transition-all disabled:opacity-50 ${
+                      pendingStatus === 'approved' ? 'bg-uh-success hover:bg-uh-success/80' : 'bg-uh-error hover:bg-uh-error/80'
+                    }`}
+                  >
+                    {isReviewing ? <Loader2 size={13} className="animate-spin" /> : null}
+                    Submit
+                  </button>
+                  <button
+                    onClick={() => { setPendingStatus(null); setNoteInput(''); }}
+                    className="px-3 py-1.5 rounded-lg text-sm text-slate-500 hover:bg-slate-100 transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Existing note display */}
+            {(review?.note || review?.reviewerName) && !pendingStatus && (
+              <div className={`mb-4 p-3 rounded-lg flex items-start gap-2 ${
+                review.status === 'approved' ? 'bg-uh-success/10 border border-uh-success/20' : 'bg-uh-error/10 border border-uh-error/20'
+              }`}>
+                <MessageSquare size={14} className={`mt-0.5 shrink-0 ${review.status === 'approved' ? 'text-uh-success' : 'text-uh-error'}`} />
+                <div className="flex-1 min-w-0">
+                  {review.reviewerName && (
+                    <p className="text-xs font-medium text-slate-600 mb-0.5">
+                      Reviewed by <span className="text-slate-800">{review.reviewerName}</span>
+                      <span className="text-slate-400 font-normal ml-1">· {review.reviewedAt}</span>
+                    </p>
+                  )}
+                  {review.note && (
+                    <p className={`text-sm ${review.status === 'approved' ? 'text-uh-success/90' : 'text-uh-error/90'}`}>{review.note}</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => openReviewModal(review.status)}
+                  className="text-xs text-slate-400 hover:text-slate-600 shrink-0"
+                  title="Edit"
+                >
+                  Edit
+                </button>
+              </div>
+            )}
 
             <p className="text-slate-600 mb-4">{analysis.summary}</p>
 

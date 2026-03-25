@@ -1,9 +1,9 @@
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Mail, Ticket, Clock, CheckCircle, AlertTriangle, Calendar, CalendarCheck } from 'lucide-react';
+import { ArrowLeft, Mail, Ticket, Clock, CheckCircle, AlertTriangle, Calendar, CalendarCheck, ThumbsUp, Flag } from 'lucide-react';
 import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { agentsApi } from '../api/client';
+import { agentsApi, analysisApi } from '../api/client';
 import type { DateMode } from '../api/client';
 import { formatDate, subDays } from '../utils/date';
 
@@ -34,6 +34,16 @@ export default function AgentDetailPage() {
   };
 
   const tickets = ticketsData?.data?.tickets || [];
+
+  // Fetch review statuses for all loaded tickets
+  const ticketIds = tickets.map((t: any) => String(t.TICKET_ID));
+  const { data: reviewsData } = useQuery({
+    queryKey: ['reviews', ticketIds.join(',')],
+    queryFn: () => analysisApi.getReviews(ticketIds),
+    enabled: ticketIds.length > 0,
+    staleTime: 1000 * 60 * 5,
+  });
+  const reviews: Record<string, { status: string; note: string | null }> = reviewsData?.data?.reviews || {};
 
   // Calculate stats
   const totalTickets = tickets.length;
@@ -70,6 +80,24 @@ export default function AgentDetailPage() {
     if (num < 60) return `${Math.round(num)}s`;
     if (num < 3600) return `${Math.round(num / 60)}m`;
     return `${(num / 3600).toFixed(1)}h`;
+  };
+
+  const ReviewBadge = ({ ticketId }: { ticketId: string }) => {
+    const r = reviews[ticketId] as any;
+    if (!r) return null;
+    const tooltip = [
+      r.reviewerName ? `By: ${r.reviewerName}` : null,
+      r.note || null,
+    ].filter(Boolean).join(' · ') || (r.status === 'approved' ? 'Approved' : 'Flagged');
+    return r.status === 'approved' ? (
+      <span title={tooltip} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-uh-success/20 text-uh-success">
+        <ThumbsUp size={9} /> QC OK
+      </span>
+    ) : (
+      <span title={tooltip} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-uh-error/20 text-uh-error">
+        <Flag size={9} /> Flagged
+      </span>
+    );
   };
 
   return (
@@ -210,7 +238,7 @@ export default function AgentDetailPage() {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-uh-cyan font-mono text-xs">
                               #{ticket.TICKET_ID}
                             </span>
@@ -221,6 +249,7 @@ export default function AgentDetailPage() {
                             }`}>
                               {ticket.TICKET_STATUS}
                             </span>
+                            <ReviewBadge ticketId={String(ticket.TICKET_ID)} />
                           </div>
                           <p className="text-sm mt-1 truncate">{ticket.SUBJECT}</p>
                           <p className="text-xs text-slate-400 mt-1 truncate">
@@ -255,7 +284,8 @@ export default function AgentDetailPage() {
                     <th className="pb-3 px-4">Customer</th>
                     <th className="pb-3 px-4">Status</th>
                     <th className="pb-3 px-4">Response</th>
-                    <th className="pb-3 pl-4">CSAT</th>
+                    <th className="pb-3 px-4">CSAT</th>
+                    <th className="pb-3 pl-4">QC Review</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -301,7 +331,7 @@ export default function AgentDetailPage() {
                       <td className="py-3 px-4 text-sm text-slate-500">
                         {formatTime(ticket.FIRST_RESPONSE_DURATION_SECONDS || 0)}
                       </td>
-                      <td className="py-3 pl-4">
+                      <td className="py-3 px-4">
                         {ticket.TICKET_CSAT && ticket.TICKET_CSAT !== 'NA' ? (
                           <span className={`text-sm font-medium ${
                             ticket.TICKET_CSAT < 3 ? 'text-uh-error' : 'text-uh-success'
@@ -311,6 +341,9 @@ export default function AgentDetailPage() {
                         ) : (
                           <span className="text-slate-300 text-sm">-</span>
                         )}
+                      </td>
+                      <td className="py-3 pl-4">
+                        <ReviewBadge ticketId={String(ticket.TICKET_ID)} />
                       </td>
                     </tr>
                   ))}

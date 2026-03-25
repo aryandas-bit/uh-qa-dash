@@ -6,6 +6,7 @@ import AgentDetailPage from './pages/AgentDetailPage';
 import TicketPage from './pages/TicketPage';
 import CustomerPage from './pages/CustomerPage';
 import DefaultersPage from './pages/DefaultersPage';
+import QCReviewsPage from './pages/QCReviewsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -27,6 +28,7 @@ function App() {
             <Route path="ticket/:id" element={<TicketPage />} />
             <Route path="customer/:email" element={<CustomerPage />} />
             <Route path="defaulters" element={<DefaultersPage />} />
+            <Route path="qc-reviews" element={<QCReviewsPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

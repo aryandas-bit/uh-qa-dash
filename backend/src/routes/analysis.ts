@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { analyzeTicket, batchAnalyze, CustomerTicketHistory } from '../services/gemini.service.js';
-import { getTicketById, getFlaggedTickets, getAgentTickets, getCustomerHistory, TicketRow } from '../services/database.service.js';
+import { getTicketById, getFlaggedTickets, getAgentTickets, getCustomerHistory, TicketRow, saveQAReview, getQAReview, deleteQAReview, getQAReviewsBulk, getAllQAReviews, getAllQAReviewsWithTickets } from '../services/database.service.js';
+import { upsertReviewToSheet, deleteReviewFromSheet } from '../services/sheets.service.js';
 import { getAllSOPs, getSOPCategories } from '../services/sop.service.js';
 import NodeCache from 'node-cache';
 
@@ -62,7 +63,8 @@ router.get('/ticket/:id', async (req, res) => {
     if (!forceRefresh) {
       const cached = analysisCache.get(id);
       if (cached) {
-        return res.json({ ticketId: id, analysis: cached, cached: true });
+        const review = getQAReview(id);
+        return res.json({ ticketId: id, analysis: cached, cached: true, review: review || null });
       }
     }
 
@@ -92,10 +94,13 @@ router.get('/ticket/:id', async (req, res) => {
     // Cache the result
     analysisCache.set(id, analysis);
 
+    const review = getQAReview(id);
+
     res.json({
       ticketId: id,
       analysis,
       cached: false,
+      review: review || null,
       customerHistory: customerHistory.slice(0, 10), // Return recent history to frontend
       ticket: {
         subject: ticket.SUBJECT,
@@ -108,6 +113,48 @@ router.get('/ticket/:id', async (req, res) => {
   } catch (error) {
     console.error('Error analyzing ticket:', error);
     res.status(500).json({ error: 'Failed to analyze ticket' });
+  }
+});
+
+// POST /api/analysis/ticket/:id/review - Approve or flag a QA analysis
+router.post('/ticket/:id/review', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, note, reviewerName } = req.body;
+
+    if (!['approved', 'flagged'].includes(status)) {
+      return res.status(400).json({ error: 'Status must be "approved" or "flagged"' });
+    }
+
+    saveQAReview(id, status as 'approved' | 'flagged', note, reviewerName);
+    const review = getQAReview(id);
+
+    // Sync to Google Sheets (non-blocking)
+    const ticket = getTicketById(id);
+    upsertReviewToSheet(id, status, note, reviewerName, {
+      subject: ticket?.SUBJECT,
+      agentEmail: ticket?.AGENT_EMAIL,
+      csat: ticket?.TICKET_CSAT,
+      day: ticket?.DAY,
+    });
+
+    res.json({ ticketId: id, review });
+  } catch (error) {
+    console.error('Error saving review:', error);
+    res.status(500).json({ error: 'Failed to save review' });
+  }
+});
+
+// DELETE /api/analysis/ticket/:id/review - Remove review (reset to pending)
+router.delete('/ticket/:id/review', async (req, res) => {
+  try {
+    const { id } = req.params;
+    deleteQAReview(id);
+    deleteReviewFromSheet(id); // non-blocking
+    res.json({ ticketId: id, review: null });
+  } catch (error) {
+    console.error('Error deleting review:', error);
+    res.status(500).json({ error: 'Failed to delete review' });
   }
 });
 
@@ -261,6 +308,44 @@ router.get('/agent/:email/summary', async (req, res) => {
   } catch (error) {
     console.error('Error fetching agent analysis summary:', error);
     res.status(500).json({ error: 'Failed to fetch analysis summary' });
+  }
+});
+
+// GET /api/analysis/reviews - Get reviews for specific ticket IDs (bulk lookup) or all with ticket info
+router.get('/reviews', (req, res) => {
+  try {
+    const ticketIdsParam = req.query.ticketIds as string | undefined;
+    if (ticketIdsParam) {
+      const ticketIds = ticketIdsParam.split(',').map(id => id.trim()).filter(Boolean);
+      const reviews = getQAReviewsBulk(ticketIds);
+      return res.json({ reviews });
+    }
+    // No filter = return all reviews enriched with ticket data + summary stats
+    const reviews = getAllQAReviewsWithTickets();
+    const approved = reviews.filter(r => r.status === 'approved');
+    const flagged = reviews.filter(r => r.status === 'flagged');
+
+    // Per-agent breakdown
+    const byAgent: Record<string, { approved: number; flagged: number }> = {};
+    reviews.forEach(r => {
+      const agent = r.agentEmail || 'Unknown';
+      if (!byAgent[agent]) byAgent[agent] = { approved: 0, flagged: 0 };
+      byAgent[agent][r.status]++;
+    });
+
+    res.json({
+      reviews,
+      summary: {
+        total: reviews.length,
+        approved: approved.length,
+        flagged: flagged.length,
+        approvalRate: reviews.length > 0 ? Math.round((approved.length / reviews.length) * 100) : 0,
+      },
+      byAgent,
+    });
+  } catch (error) {
+    console.error('Error fetching reviews:', error);
+    res.status(500).json({ error: 'Failed to fetch reviews' });
   }
 });
 

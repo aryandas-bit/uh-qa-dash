@@ -1,9 +1,10 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, AlertTriangle } from 'lucide-react';
+import { LayoutDashboard, AlertTriangle, ClipboardList } from 'lucide-react';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/defaulters', label: 'Defaulters', icon: AlertTriangle },
+  { path: '/qc-reviews', label: 'QC Reviews', icon: ClipboardList },
 ];
 
 export default function Layout() {
@@ -26,7 +27,9 @@ export default function Layout() {
           <ul className="space-y-2">
             {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = location.pathname === item.path;
+              const isActive = item.path === '/'
+                ? location.pathname === '/'
+                : location.pathname.startsWith(item.path);
 
               return (
                 <li key={item.path}>

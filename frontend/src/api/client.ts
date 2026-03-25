@@ -57,6 +57,12 @@ export const analysisApi = {
     api.post('/analysis/batch', { date, agentEmail, limit, prioritizeFlagged: true }, { timeout: 120000 }), // 2 min for AI
   getAgentSummary: (email: string, date: string) =>
     api.get(`/analysis/agent/${encodeURIComponent(email)}/summary?date=${date}`),
+  reviewTicket: (id: string, status: 'approved' | 'flagged', note?: string, reviewerName?: string) =>
+    api.post(`/analysis/ticket/${id}/review`, { status, note, reviewerName }),
+  clearReview: (id: string) =>
+    api.delete(`/analysis/ticket/${id}/review`),
+  getReviews: (ticketIds?: string[]) =>
+    api.get(`/analysis/reviews${ticketIds?.length ? `?ticketIds=${ticketIds.join(',')}` : ''}`),
 };
 
 export const customersApi = {

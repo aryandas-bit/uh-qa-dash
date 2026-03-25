@@ -8,6 +8,126 @@ const dbPath = process.env.DATABASE_PATH || path.join(process.cwd(), '../../yell
 console.log('Connecting to database:', dbPath);
 const db: DatabaseType = new Database(dbPath, { readonly: true });
 
+// Separate writable database for QA reviews (project root = one level up from backend/)
+const reviewsDbPath = process.env.REVIEWS_DB_PATH || path.join(process.cwd(), '../qa_reviews.db');
+const reviewsDb: DatabaseType = new Database(reviewsDbPath);
+reviewsDb.exec(`
+  CREATE TABLE IF NOT EXISTS qa_reviews (
+    ticket_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL CHECK(status IN ('approved', 'flagged')),
+    note TEXT,
+    reviewer_name TEXT,
+    reviewed_at TEXT NOT NULL
+  )
+`);
+// Migrate existing tables that don't have reviewer_name yet
+try {
+  reviewsDb.exec(`ALTER TABLE qa_reviews ADD COLUMN reviewer_name TEXT`);
+} catch (_) { /* column already exists */ }
+
+export interface QAReview {
+  status: 'approved' | 'flagged';
+  note: string | null;
+  reviewerName: string | null;
+  reviewedAt: string;
+}
+
+export function saveQAReview(ticketId: string, status: 'approved' | 'flagged', note?: string, reviewerName?: string): void {
+  const stmt = reviewsDb.prepare(`
+    INSERT OR REPLACE INTO qa_reviews (ticket_id, status, note, reviewer_name, reviewed_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+  `);
+  stmt.run(ticketId, status, note || null, reviewerName || null);
+}
+
+export function getQAReview(ticketId: string): QAReview | undefined {
+  const stmt = reviewsDb.prepare(`
+    SELECT status, note, reviewer_name as reviewerName, reviewed_at as reviewedAt
+    FROM qa_reviews WHERE ticket_id = ?
+  `);
+  return stmt.get(ticketId) as QAReview | undefined;
+}
+
+export function deleteQAReview(ticketId: string): void {
+  const stmt = reviewsDb.prepare(`DELETE FROM qa_reviews WHERE ticket_id = ?`);
+  stmt.run(ticketId);
+}
+
+export function getQAReviewsBulk(ticketIds: string[]): Record<string, QAReview> {
+  if (ticketIds.length === 0) return {};
+  const placeholders = ticketIds.map(() => '?').join(',');
+  const stmt = reviewsDb.prepare(`
+    SELECT ticket_id, status, note, reviewer_name as reviewerName, reviewed_at as reviewedAt
+    FROM qa_reviews
+    WHERE ticket_id IN (${placeholders})
+  `);
+  const rows = stmt.all(...ticketIds) as Array<QAReview & { ticket_id: string }>;
+  const result: Record<string, QAReview> = {};
+  rows.forEach(row => {
+    result[row.ticket_id] = { status: row.status, note: row.note, reviewerName: row.reviewerName, reviewedAt: row.reviewedAt };
+  });
+  return result;
+}
+
+export function getAllQAReviews(): Array<QAReview & { ticketId: string }> {
+  const stmt = reviewsDb.prepare(`
+    SELECT ticket_id as ticketId, status, note, reviewer_name as reviewerName, reviewed_at as reviewedAt
+    FROM qa_reviews
+    ORDER BY reviewed_at DESC
+  `);
+  return stmt.all() as Array<QAReview & { ticketId: string }>;
+}
+
+export interface ReviewWithTicket extends QAReview {
+  ticketId: string;
+  reviewerName: string | null;
+  subject: string | null;
+  agentEmail: string | null;
+  visitorEmail: string | null;
+  csat: number | null;
+  day: string | null;
+  ticketStatus: string | null;
+}
+
+export function getAllQAReviewsWithTickets(): ReviewWithTicket[] {
+  // Get all reviews first
+  const reviews = getAllQAReviews();
+  if (reviews.length === 0) return [];
+
+  // Fetch ticket details for each review from main DB
+  const placeholders = reviews.map(() => '?').join(',');
+  const ticketIds = reviews.map(r => r.ticketId);
+  const stmt = db.prepare(`
+    SELECT
+      TICKET_ID,
+      MAX(SUBJECT) as SUBJECT,
+      MAX(AGENT_EMAIL) as AGENT_EMAIL,
+      MAX(VISITOR_EMAIL) as VISITOR_EMAIL,
+      MAX(TICKET_CSAT) as TICKET_CSAT,
+      MAX(DAY) as DAY,
+      MAX(TICKET_STATUS) as TICKET_STATUS
+    FROM raw_tickets
+    WHERE TICKET_ID IN (${placeholders})
+    GROUP BY TICKET_ID
+  `);
+  const ticketRows = stmt.all(...ticketIds) as any[];
+  const ticketMap: Record<string, any> = {};
+  ticketRows.forEach(t => { ticketMap[String(t.TICKET_ID)] = t; });
+
+  return reviews.map(r => {
+    const t = ticketMap[r.ticketId];
+    return {
+      ...r,
+      subject: t?.SUBJECT || null,
+      agentEmail: t?.AGENT_EMAIL || null,
+      visitorEmail: t?.VISITOR_EMAIL || null,
+      csat: t?.TICKET_CSAT || null,
+      day: t?.DAY || null,
+      ticketStatus: t?.TICKET_STATUS || null,
+    };
+  });
+}
+
 export interface TicketRow {
   TICKET_ID: string;
   VISITOR_NAME: string;
