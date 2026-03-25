@@ -1,26 +1,27 @@
 # Ultrahuman QA Dashboard
 
-A full-stack QA analytics dashboard for reviewing customer support conversations, tracking agent performance, and running AI-assisted ticket audits against internal SOPs.
+Internal QA dashboard for support-ticket review, agent performance tracking, and AI-assisted conversation audits.
 
 ## Overview
 
-This repository contains two applications:
+This repository contains two apps:
 
-- `frontend/`: a React + Vite dashboard for browsing QA insights, agent performance, customer history, and ticket-level analysis
-- `backend/`: an Express + TypeScript API that reads support data, exposes reporting endpoints, and runs LLM-based QA scoring
+- `frontend/`: React + Vite dashboard for daily QA operations
+- `backend/`: Express + TypeScript API for analytics, ticket drill-downs, and review workflows
 
-The project is designed for internal support-quality workflows where reviewers need both operational metrics and deeper ticket-by-ticket audit context.
+The system combines operational reporting from local SQLite data with LLM-backed ticket analysis and a QC review workflow that can sync reviewer decisions to Google Sheets.
 
-## Key Capabilities
+## Current Capabilities
 
-- Daily QA visibility for support agents
-- Ticket-level AI analysis with structured deductions
-- SOP compliance scoring and audit summaries
-- Customer history lookup across prior conversations
-- Defaulter tracking for low-quality or high-risk patterns
-- Dashboard views for trends, summaries, and agent drill-downs
+- Dashboard view for daily agent QA metrics
+- Agent drill-down pages with ticket-level performance
+- Ticket detail pages with AI-generated QA scoring
+- Customer history lookup across prior tickets
+- Defaulter tracking for risky or low-quality patterns
+- QC review queue and review history
+- Google Sheets sync for QC review records
 
-## Tech Stack
+## Stack
 
 ### Frontend
 
@@ -31,6 +32,7 @@ The project is designed for internal support-quality workflows where reviewers n
 - TanStack Query
 - React Router
 - Recharts
+- Zustand
 
 ### Backend
 
@@ -38,13 +40,14 @@ The project is designed for internal support-quality workflows where reviewers n
 - Express
 - TypeScript
 - better-sqlite3
+- Google Sheets API (`googleapis`)
 
 ### AI / Data
 
 - OpenAI SDK
 - Anthropic SDK
-- Local SQLite data source
-- SOP JSON inputs for policy-aware analysis
+- Local SQLite databases
+- SOP JSON inputs for policy-aware scoring
 
 ## Repository Structure
 
@@ -57,18 +60,39 @@ qa-dashboard/
 │   ├── package.json
 │   └── tsconfig.json
 ├── frontend/
-│   ├── public/
 │   ├── src/
 │   │   ├── api/
 │   │   ├── components/
-│   │   ├── pages/
-│   │   ├── types/
-│   │   └── utils/
+│   │   └── pages/
 │   ├── package.json
 │   └── vite.config.ts
 ├── vercel.json
 └── README.md
 ```
+
+## Frontend Routes
+
+- `/`: dashboard
+- `/agent/:email`: agent detail view
+- `/ticket/:id`: ticket analysis view
+- `/customer/:email`: customer history
+- `/defaulters`: defaulters list
+- `/qc-reviews`: QC review workflow
+
+## Backend API
+
+The backend exposes these main routes:
+
+- `GET /api/health`
+- `GET /api/agents/daily`
+- `GET /api/agents/:email/tickets`
+- `GET /api/agents/defaulters`
+- `GET /api/tickets/:id`
+- `GET /api/customers/:email/history`
+- `GET /api/analysis/ticket/:id`
+- `POST /api/analysis/batch`
+
+Additional QC review endpoints live under the analysis route layer and support saving/retrieving review outcomes used by the frontend QC reviews page.
 
 ## Local Development
 
@@ -81,18 +105,28 @@ cd ../frontend && npm install
 
 ### 2. Configure backend environment
 
-Create `backend/.env` with the required values:
+Create `backend/.env`:
 
 ```env
 PORT=3001
 DATABASE_PATH=../../yellow_bot_analysis.db
+REVIEWS_DB_PATH=../qa_reviews.db
 SOPS_PATH=../../all_sops.json
 OPENAI_API_KEY=your_openai_key
+ANTHROPIC_API_KEY=your_anthropic_key
+GEMINI_API_KEY=your_gemini_key
+GOOGLE_SHEET_ID=your_google_sheet_id
+GOOGLE_CREDENTIALS_PATH=./service-account.json
 METABASE_URL=https://metabase.ultrahuman.com
 METABASE_API_KEY=your_metabase_api_key
 ```
 
-If your deployment uses Anthropic or Gemini-backed analysis in service code, add the matching provider keys as needed for your environment.
+Notes:
+
+- `OPENAI_API_KEY` is required for the OpenAI-backed analysis service.
+- `ANTHROPIC_API_KEY` and `GEMINI_API_KEY` are only needed if you use those providers in your local flow.
+- `GOOGLE_CREDENTIALS_PATH` should point to a local service-account JSON file. Do not commit it.
+- The repo now ignores `backend/*.json` to avoid pushing local credentials accidentally.
 
 ### 3. Start the backend
 
@@ -101,7 +135,7 @@ cd backend
 npm run dev
 ```
 
-The API will be available at `http://localhost:3001`.
+The API runs at `http://localhost:3001`.
 
 ### 4. Start the frontend
 
@@ -110,7 +144,7 @@ cd frontend
 npm run dev
 ```
 
-The dashboard will be available at `http://localhost:5173`.
+The dashboard runs at `http://localhost:5173`.
 
 ## Build Commands
 
@@ -128,49 +162,32 @@ cd backend
 npm run build
 ```
 
-## API Surface
+## Data Model Notes
 
-The backend exposes a small REST API used by the dashboard:
-
-- `GET /api/health`: service health check
-- `GET /api/agents/daily`: daily agent metrics
-- `GET /api/agents/:email/tickets`: ticket list for an agent
-- `GET /api/agents/defaulters`: low-performing or flagged agents
-- `GET /api/tickets/:id`: ticket details and conversation data
-- `GET /api/analysis/ticket/:id`: AI QA analysis for a ticket
-- `POST /api/analysis/batch`: batch analysis workflow
-- `GET /api/customers/:email/history`: customer conversation history
-
-## QA Scoring Model
-
-The audit flow uses structured deductions across common support-review categories:
-
-- `opening`
-- `process`
-- `chat_handling`
-- `closing`
-- `fatal`
-
-The implementation is tuned for support QA reviews and SOP-backed scoring rather than generic sentiment analysis.
+- Primary ticket and agent analytics come from the main SQLite database referenced by `DATABASE_PATH`.
+- QC review decisions are stored separately via `REVIEWS_DB_PATH`.
+- SOP definitions are loaded from the JSON file referenced by `SOPS_PATH`.
+- Google Sheets sync writes QC review rows to the `QC Reviews` sheet tab.
 
 ## Deployment
 
-The repository includes a root [`vercel.json`](/Users/aryan/Desktop/qa-dashboard/vercel.json) that builds the Vite frontend from `frontend/` and serves the generated static output.
+The repository includes [`vercel.json`](/Users/aryan/Desktop/qa-dashboard/vercel.json) for deploying the frontend from the repo root.
 
-For Vercel:
+If you deploy on Vercel:
 
 1. Import the GitHub repository.
 2. Keep the project root at the repository root.
-3. Redeploy after each push to `main`.
+3. Configure the frontend build as defined in `vercel.json`.
+4. Deploy the backend separately if you need API access in production.
 
-If you deploy the backend separately, configure its environment variables on the target host before starting the Node service.
+The backend requires its own runtime, environment variables, and access to the database / SOP files.
 
 ## Notes
 
-- This project expects local data files and internal service credentials that are not committed to the repository.
-- The frontend and backend are intentionally decoupled so the dashboard can be deployed separately from the API.
-- Production readiness depends on valid data sources, API keys, and environment configuration.
+- This is an internal project and depends on local or private data sources that are not committed.
+- `backend/.env`, service-account JSON files, and database assets should stay out of version control.
+- Production behavior depends on valid data paths, provider keys, and Google API credentials.
 
 ## License
 
-This repository is private/internal unless you explicitly add a license file and publish it under that license.
+This repository is private/internal unless a license file is added explicitly.
