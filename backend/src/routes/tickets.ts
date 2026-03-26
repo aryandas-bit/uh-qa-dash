@@ -6,14 +6,14 @@ const router = Router();
 const cache = new NodeCache({ stdTTL: 3600 }); // 1 hour cache
 
 // GET /api/tickets/summary - Get daily summary stats
-router.get('/summary', (req, res) => {
+router.get('/summary', async (req, res) => {
   try {
     const date = req.query.date as string;
     if (!date) {
       return res.status(400).json({ error: 'Date parameter is required' });
     }
 
-    const summary = getDailySummary(date);
+    const summary = await getDailySummary(date);
     res.json({ date, summary });
   } catch (error) {
     console.error('Error fetching summary:', error);
@@ -22,7 +22,7 @@ router.get('/summary', (req, res) => {
 });
 
 // GET /api/tickets/insights - Get comprehensive daily insights
-router.get('/insights', (req, res) => {
+router.get('/insights', async (req, res) => {
   try {
     const date = req.query.date as string;
     const dateMode = (req.query.dateMode as DateMode) || 'activity';
@@ -35,10 +35,10 @@ router.get('/insights', (req, res) => {
     let result = cache.get(cacheKey);
 
     if (!result) {
-      const summary = getDailyInsights(date, dateMode);
-      const topIssues = getTopIssues(date, 10, dateMode);
-      const bestAgents = getBestAgents(date, 5, dateMode);
-      const frustratedCustomers = getFrustratedCustomers(date, 5, dateMode);
+      const summary = await getDailyInsights(date, dateMode);
+      const topIssues = await getTopIssues(date, 10, dateMode);
+      const bestAgents = await getBestAgents(date, 5, dateMode);
+      const frustratedCustomers = await getFrustratedCustomers(date, 5, dateMode);
 
       result = {
         date,
@@ -59,7 +59,7 @@ router.get('/insights', (req, res) => {
 });
 
 // GET /api/tickets/flagged - Get flagged tickets for a date
-router.get('/flagged', (req, res) => {
+router.get('/flagged', async (req, res) => {
   try {
     const date = req.query.date as string;
     const limit = parseInt(req.query.limit as string) || 50;
@@ -68,7 +68,7 @@ router.get('/flagged', (req, res) => {
       return res.status(400).json({ error: 'Date parameter is required' });
     }
 
-    const tickets = getFlaggedTickets(date, limit);
+    const tickets = await getFlaggedTickets(date, limit);
     res.json({ date, tickets, count: tickets.length });
   } catch (error) {
     console.error('Error fetching flagged tickets:', error);
@@ -77,10 +77,10 @@ router.get('/flagged', (req, res) => {
 });
 
 // GET /api/tickets/:id - Get single ticket
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const ticket = getTicketById(id);
+    const ticket = await getTicketById(id);
 
     if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found' });

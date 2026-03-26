@@ -13,13 +13,13 @@ const router = Router();
 const cache = new NodeCache({ stdTTL: 3600 }); // 1 hour cache for historical data
 
 // GET /api/agents/dates - Get available dates
-router.get('/dates', (req, res) => {
+router.get('/dates', async (req, res) => {
   try {
     const cacheKey = 'available_dates';
     let dates = cache.get<string[]>(cacheKey);
 
     if (!dates) {
-      dates = getAvailableDates();
+      dates = await getAvailableDates();
       cache.set(cacheKey, dates);
     }
 
@@ -32,7 +32,7 @@ router.get('/dates', (req, res) => {
 
 // GET /api/agents/daily - Get agent summary for a date
 // Query params: date (required), dateMode ('activity' | 'initialized', default: 'activity')
-router.get('/daily', (req, res) => {
+router.get('/daily', async (req, res) => {
   try {
     const date = req.query.date as string;
     const dateMode = (req.query.dateMode as DateMode) || 'activity';
@@ -45,7 +45,7 @@ router.get('/daily', (req, res) => {
     let summary = cache.get(cacheKey);
 
     if (!summary) {
-      summary = getAgentsDailySummary(date, dateMode);
+      summary = await getAgentsDailySummary(date, dateMode);
       cache.set(cacheKey, summary);
     }
 
@@ -58,7 +58,7 @@ router.get('/daily', (req, res) => {
 
 // GET /api/agents/:email/tickets - Get agent's tickets for a date
 // Query params: date (required), dateMode ('activity' | 'initialized', default: 'activity'), limit, offset
-router.get('/:email/tickets', (req, res) => {
+router.get('/:email/tickets', async (req, res) => {
   try {
     const { email } = req.params;
     const date = req.query.date as string;
@@ -74,7 +74,7 @@ router.get('/:email/tickets', (req, res) => {
     let result = cache.get<{ agentEmail: string; date: string; dateMode: string; tickets: any[]; count: number }>(cacheKey);
 
     if (!result) {
-      const tickets = getAgentTickets(email, date, limit, offset, dateMode);
+      const tickets = await getAgentTickets(email, date, limit, offset, dateMode);
       result = { agentEmail: email, date, dateMode, tickets, count: tickets.length };
       cache.set(cacheKey, result);
     }
@@ -87,7 +87,7 @@ router.get('/:email/tickets', (req, res) => {
 });
 
 // GET /api/agents/:email/performance - Get agent performance over time
-router.get('/:email/performance', (req, res) => {
+router.get('/:email/performance', async (req, res) => {
   try {
     const { email } = req.params;
     const startDate = req.query.startDate as string;
@@ -97,7 +97,7 @@ router.get('/:email/performance', (req, res) => {
       return res.status(400).json({ error: 'startDate and endDate parameters are required' });
     }
 
-    const performance = getAgentPerformance(email, startDate, endDate);
+    const performance = await getAgentPerformance(email, startDate, endDate);
     res.json({ agentEmail: email, startDate, endDate, performance });
   } catch (error) {
     console.error('Error fetching agent performance:', error);
@@ -106,7 +106,7 @@ router.get('/:email/performance', (req, res) => {
 });
 
 // GET /api/agents/defaulters - Get agents with frequent issues
-router.get('/defaulters', (req, res) => {
+router.get('/defaulters', async (req, res) => {
   try {
     const minIssues = parseInt(req.query.minIssues as string) || 5;
     const days = parseInt(req.query.days as string) || 30;
@@ -115,7 +115,7 @@ router.get('/defaulters', (req, res) => {
     let defaulters = cache.get(cacheKey);
 
     if (!defaulters) {
-      defaulters = getDefaulters(minIssues, days);
+      defaulters = await getDefaulters(minIssues, days);
       cache.set(cacheKey, defaulters);
     }
 

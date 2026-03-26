@@ -33,6 +33,10 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
   res.status(500).json({ error: err.message });
 });
 
-app.listen(PORT, () => {
-  console.log(`QA Dashboard API running on http://localhost:${PORT}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`QA Dashboard API running on http://localhost:${PORT}`);
+  });
+}
+
+export default app;

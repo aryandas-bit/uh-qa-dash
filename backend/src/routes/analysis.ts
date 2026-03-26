@@ -63,13 +63,13 @@ router.get('/ticket/:id', async (req, res) => {
     if (!forceRefresh) {
       const cached = analysisCache.get(id);
       if (cached) {
-        const review = getQAReview(id);
+        const review = await getQAReview(id);
         return res.json({ ticketId: id, analysis: cached, cached: true, review: review || null });
       }
     }
 
     // Get ticket data
-    const ticket = getTicketById(id);
+    const ticket = await getTicketById(id);
     if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
@@ -77,7 +77,7 @@ router.get('/ticket/:id', async (req, res) => {
     // Get customer history for context (only tickets BEFORE current one)
     let customerHistory: CustomerTicketHistory[] = [];
     if (ticket.VISITOR_EMAIL) {
-      const historyTickets = getCustomerHistory(ticket.VISITOR_EMAIL, 20);
+      const historyTickets = await getCustomerHistory(ticket.VISITOR_EMAIL, 20);
       customerHistory = formatCustomerHistoryForAnalysis(historyTickets, id, ticket.INITIALIZED_TIME);
       console.log(`[Analysis] Customer ${ticket.VISITOR_EMAIL} has ${customerHistory.length} previous tickets`);
     }
@@ -94,7 +94,7 @@ router.get('/ticket/:id', async (req, res) => {
     // Cache the result
     analysisCache.set(id, analysis);
 
-    const review = getQAReview(id);
+    const review = await getQAReview(id);
 
     res.json({
       ticketId: id,
@@ -126,11 +126,11 @@ router.post('/ticket/:id/review', async (req, res) => {
       return res.status(400).json({ error: 'Status must be "approved" or "flagged"' });
     }
 
-    saveQAReview(id, status as 'approved' | 'flagged', note, reviewerName);
-    const review = getQAReview(id);
+    await saveQAReview(id, status as 'approved' | 'flagged', note, reviewerName);
+    const review = await getQAReview(id);
 
     // Sync to Google Sheets (non-blocking)
-    const ticket = getTicketById(id);
+    const ticket = await getTicketById(id);
     upsertReviewToSheet(id, status, note, reviewerName, {
       subject: ticket?.SUBJECT,
       agentEmail: ticket?.AGENT_EMAIL,
@@ -149,7 +149,7 @@ router.post('/ticket/:id/review', async (req, res) => {
 router.delete('/ticket/:id/review', async (req, res) => {
   try {
     const { id } = req.params;
-    deleteQAReview(id);
+    await deleteQAReview(id);
     deleteReviewFromSheet(id); // non-blocking
     res.json({ ticketId: id, review: null });
   } catch (error) {
@@ -170,12 +170,12 @@ router.post('/batch', async (req, res) => {
     // Get tickets to analyze
     let tickets;
     if (agentEmail) {
-      tickets = getAgentTickets(agentEmail, date, limit, 0);
+      tickets = await getAgentTickets(agentEmail, date, limit, 0);
     } else if (prioritizeFlagged) {
-      tickets = getFlaggedTickets(date, limit);
+      tickets = await getFlaggedTickets(date, limit);
     } else {
       // This would need a getAllTickets function - for now use flagged
-      tickets = getFlaggedTickets(date, limit);
+      tickets = await getFlaggedTickets(date, limit);
     }
 
     if (tickets.length === 0) {
@@ -257,7 +257,7 @@ router.get('/agent/:email/summary', async (req, res) => {
       return res.status(400).json({ error: 'Date parameter is required' });
     }
 
-    const tickets = getAgentTickets(email, date, 100, 0);
+    const tickets = await getAgentTickets(email, date, 100, 0);
 
     // Get cached analyses
     const analyses: any[] = [];
@@ -312,16 +312,16 @@ router.get('/agent/:email/summary', async (req, res) => {
 });
 
 // GET /api/analysis/reviews - Get reviews for specific ticket IDs (bulk lookup) or all with ticket info
-router.get('/reviews', (req, res) => {
+router.get('/reviews', async (req, res) => {
   try {
     const ticketIdsParam = req.query.ticketIds as string | undefined;
     if (ticketIdsParam) {
       const ticketIds = ticketIdsParam.split(',').map(id => id.trim()).filter(Boolean);
-      const reviews = getQAReviewsBulk(ticketIds);
+      const reviews = await getQAReviewsBulk(ticketIds);
       return res.json({ reviews });
     }
     // No filter = return all reviews enriched with ticket data + summary stats
-    const reviews = getAllQAReviewsWithTickets();
+    const reviews = await getAllQAReviewsWithTickets();
     const approved = reviews.filter(r => r.status === 'approved');
     const flagged = reviews.filter(r => r.status === 'flagged');
 

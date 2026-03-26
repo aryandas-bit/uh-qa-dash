@@ -4,12 +4,12 @@ import { getCustomerHistory } from '../services/database.service.js';
 const router = Router();
 
 // GET /api/customers/:email/history - Get customer ticket history
-router.get('/:email/history', (req, res) => {
+router.get('/:email/history', async (req, res) => {
   try {
     const { email } = req.params;
     const limit = parseInt(req.query.limit as string) || 50;
 
-    const tickets = getCustomerHistory(email, limit);
+    const tickets = await getCustomerHistory(email, limit);
 
     // Group by agent to see which agents handled this customer
     const agentSummary = tickets.reduce((acc: Record<string, number>, ticket) => {

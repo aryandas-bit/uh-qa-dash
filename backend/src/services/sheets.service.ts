@@ -12,6 +12,14 @@ const HEADERS = [
 ];
 
 function getAuth() {
+  const credentialsJson = process.env.GOOGLE_CREDENTIALS_JSON;
+  if (credentialsJson) {
+    const credentials = JSON.parse(credentialsJson);
+    return new google.auth.GoogleAuth({
+      credentials,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+  }
   return new google.auth.GoogleAuth({
     keyFile: CREDENTIALS_PATH,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
