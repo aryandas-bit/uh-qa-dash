@@ -5,8 +5,8 @@
   "main": "dist/app.js",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --env-file=.env src/app.ts",
-    "compile": "tsc",
+    "dev": "node --env-file=.env --import tsx/esm src/app.ts",
+    "build": "tsc",
     "start": "node dist/app.js"
   },
   "dependencies": {

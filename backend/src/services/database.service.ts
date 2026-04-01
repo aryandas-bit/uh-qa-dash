@@ -1,3 +1,5 @@
+import dotenv from 'dotenv';
+dotenv.config();
 import { createClient } from '@libsql/client';
 
 // Main read-only database (yellow_bot_analysis)
