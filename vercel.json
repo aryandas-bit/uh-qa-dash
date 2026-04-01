@@ -3,12 +3,12 @@
   "buildCommand": "cd frontend && npm install && npm run build",
   "outputDirectory": "frontend/dist",
   "functions": {
-    "api/index.ts": {
-      "maxDuration": 60
+    "api/ping.ts": {
+      "maxDuration": 10
     }
   },
   "routes": [
-    { "src": "/api/(.*)", "dest": "/api/index" },
+    { "src": "/api/ping", "dest": "/api/ping" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
