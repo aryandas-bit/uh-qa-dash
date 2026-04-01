@@ -1,1 +1,7 @@
 *.db
+backend/Dockerfile
+backend/.dockerignore
+backend/fly.toml
+backend/railway.json
+backend/package.json
+backend/package-lock.json
