@@ -3,13 +3,18 @@
   "buildCommand": "cd frontend && npm install && npm run build",
   "outputDirectory": "frontend/dist",
   "functions": {
-    "api/ping.ts": {
-      "maxDuration": 10
+    "api/index.ts": {
+      "maxDuration": 60
     }
   },
-  "routes": [
-    { "src": "/api/ping", "dest": "/api/ping" },
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/index.html" }
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api"
+    },
+    {
+      "source": "/:path*",
+      "destination": "/index.html"
+    }
   ]
 }
