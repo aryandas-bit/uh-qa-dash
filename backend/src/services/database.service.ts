@@ -142,23 +142,24 @@ export async function getDailyPicksFromDb(date: string, dateMode: DateMode = 'ac
 
 export async function saveDailyPicks(picks: Array<{ pickDate: string; dateMode: DateMode; agentEmail: string; ticketId: string; pickOrder: number; analyzed?: boolean; analysisStatus?: string | null }>): Promise<void> {
   await initPromise;
+  if (picks.length === 0) return;
   const now = new Date().toISOString();
-  for (const pick of picks) {
-    await reviewsDb.execute({
-      sql: `INSERT OR IGNORE INTO daily_picks (pick_date, date_mode, agent_email, ticket_id, pick_order, analyzed, analysis_status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [
-        pick.pickDate,
-        pick.dateMode,
-        pick.agentEmail,
-        pick.ticketId,
-        pick.pickOrder,
-        pick.analyzed ? 1 : 0,
-        pick.analysisStatus || null,
-        now
-      ],
-    });
-  }
+  // Batch insert in a single transaction instead of N individual round-trips
+  const statements = picks.map(pick => ({
+    sql: `INSERT OR IGNORE INTO daily_picks (pick_date, date_mode, agent_email, ticket_id, pick_order, analyzed, analysis_status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      pick.pickDate,
+      pick.dateMode,
+      pick.agentEmail,
+      pick.ticketId,
+      pick.pickOrder,
+      pick.analyzed ? 1 : 0,
+      pick.analysisStatus || null,
+      now
+    ],
+  }));
+  await reviewsDb.batch(statements, 'write');
 }
 
 export async function markPickAnalyzed(date: string, dateMode: DateMode, ticketId: string, status: string): Promise<void> {

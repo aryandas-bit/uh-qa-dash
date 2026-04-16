@@ -12,6 +12,7 @@ const MAX_SOP_STEPS = Math.max(1, Number(process.env.GEMINI_MAX_SOP_STEPS || '15
 const INTER_BATCH_DELAY_MS = Math.max(500, Number(process.env.GEMINI_INTER_BATCH_DELAY_MS || '5000'));
 const RETRY_BACKOFF_MS = Math.max(500, Number(process.env.GEMINI_RETRY_BACKOFF_MS || '2000'));
 const MAX_OUTPUT_TOKENS = Math.max(512, Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || '4096'));
+const GEMINI_REQUEST_TIMEOUT_MS = Math.max(5000, Number(process.env.GEMINI_REQUEST_TIMEOUT_MS || '8000'));
 
 const LEGACY_GEMINI_MODELS = new Set([
   'gemini-2.0-flash',
@@ -27,7 +28,7 @@ console.log(
   `maxMessages=${MAX_SELECTED_MESSAGES} ` +
   `maxMsgChars=${MAX_MESSAGE_CHARS} maxTranscript=${MAX_TRANSCRIPT_CHARS} ` +
   `maxHistory=${MAX_HISTORY_TICKETS} maxSopSteps=${MAX_SOP_STEPS} ` +
-  `batchDelay=${INTER_BATCH_DELAY_MS}ms maxOutputTokens=${MAX_OUTPUT_TOKENS}`
+  `batchDelay=${INTER_BATCH_DELAY_MS}ms maxOutputTokens=${MAX_OUTPUT_TOKENS} requestTimeout=${GEMINI_REQUEST_TIMEOUT_MS}ms`
 );
 
 const KEYWORD_BOOSTS = [
@@ -37,6 +38,12 @@ const KEYWORD_BOOSTS = [
   'tried', 'already', 'checked', 'reset', 'sync', 'bluetooth', 'charging', 'battery',
   'doctor', 'investigate', 'update', 'timeline', 'csat', 'rating', 'tag'
 ];
+
+// Pre-compiled regex for O(1) keyword matching instead of O(n*m) loop
+const KEYWORD_BOOST_PATTERN = new RegExp(
+  KEYWORD_BOOSTS.map(kw => kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
+  'gi'
+);
 
 const STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'but', 'by', 'for', 'from',
@@ -351,7 +358,11 @@ export async function analyzeTicket(
     return analysis;
   } catch (error) {
     console.error('Gemini analysis error:', error);
-    throw new Error('Failed to analyze ticket with AI');
+    const message = error instanceof Error ? error.message : 'Unknown Gemini analysis error';
+    if (/429|quota|RESOURCE_EXHAUSTED|request failed|timed out|503/i.test(message)) {
+      throw new Error('AI analysis is temporarily unavailable due to provider quota or timeout');
+    }
+    throw new Error(`Failed to analyze ticket with AI: ${message}`);
   }
 }
 
@@ -433,9 +444,9 @@ function scoreMessageSalience(message: NormalizedMessage, index: number, totalMe
   if (content.includes('?')) score += 1;
   if (content.length > 180) score += 1;
 
-  KEYWORD_BOOSTS.forEach((keyword) => {
-    if (content.includes(keyword)) score += 2;
-  });
+  // Single regex pass instead of 23 separate includes() calls
+  const keywordMatches = (content.match(KEYWORD_BOOST_PATTERN) || []).length;
+  score += keywordMatches * 2;
 
   if (/thank|resolved|working now|done|fixed|perfect|great/i.test(content)) score += 2;
   if (/hello|hi|thank you for reaching out|please allow me/i.test(content) && message.sender === 'BOT') score -= 1.5;
@@ -711,8 +722,9 @@ function truncateText(text: string, maxLength: number): string {
   return `${text.slice(0, maxLength - 3).trim()}...`;
 }
 
+const MAX_RETRIES = 3;
+
 async function callGemini(prompt: string, apiKey: string) {
-  const model = CONFIGURED_GEMINI_MODEL;
   const requestBody = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
@@ -723,37 +735,62 @@ async function callGemini(prompt: string, apiKey: string) {
   };
 
   let lastError: Error | null = null;
+  const errors: string[] = [];
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const response = await fetch(`${GEMINI_API_BASE}/${model}:generateContent`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-goog-api-key': apiKey,
-      },
-      body: JSON.stringify(requestBody),
-    });
+  for (const model of GEMINI_MODEL_CANDIDATES) {
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      let response: Response;
+      try {
+        response = await fetch(`${GEMINI_API_BASE}/${model}:generateContent`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-goog-api-key': apiKey,
+          },
+          body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(GEMINI_REQUEST_TIMEOUT_MS),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown Gemini fetch error';
+        console.error(`Gemini API request failed model=${model} attempt=${attempt}/${MAX_RETRIES}:`, message);
+        errors.push(`${model}: request_failed`);
+        lastError = new Error(`Gemini API request failed on ${model}: ${message}`);
+        if (attempt < MAX_RETRIES) {
+          await sleep(RETRY_BACKOFF_MS * attempt);
+          continue;
+        }
+        break;
+      }
 
-    if (response.ok) {
-      return response.json();
+      if (response.ok) {
+        return response.json();
+      }
+
+      const errorText = await response.text();
+      lastError = new Error(`Gemini ${model}: ${response.status}`);
+      errors.push(`${model}: ${response.status}`);
+
+      // Non-retryable client errors (except 429) — fail immediately
+      if (response.status !== 429 && response.status < 500) {
+        console.error(`Gemini API error (non-retryable) model=${model}:`, errorText);
+        throw lastError;
+      }
+
+      // 429 or 5xx — retry with backoff, then try next model
+      if (attempt < MAX_RETRIES) {
+        const backoffMs = RETRY_BACKOFF_MS * Math.pow(2, attempt - 1);
+        console.warn(`Gemini ${model} attempt=${attempt}/${MAX_RETRIES} status=${response.status}, retrying in ${backoffMs}ms`);
+        await sleep(backoffMs);
+        continue;
+      }
+
+      // Exhausted retries for this model — try next
+      console.warn(`Gemini ${model} exhausted ${MAX_RETRIES} retries, trying next model`);
+      break;
     }
-
-    const errorText = await response.text();
-    lastError = new Error(`Gemini ${model}: ${response.status}`);
-
-    if (response.status !== 429 && response.status < 500) {
-      console.error(`Gemini API error (non-retryable) model=${model}:`, errorText);
-      throw lastError;
-    }
-
-    // Parse retry delay from API response if available
-    const retryMatch = errorText.match(/retryDelay.*?(\d+)/);
-    const backoff = retryMatch ? Math.min(parseInt(retryMatch[1], 10) * 1000, 10000) : RETRY_BACKOFF_MS * attempt;
-    console.warn(`Gemini ${model} ${response.status}, retry ${attempt}/3 in ${backoff}ms`);
-    await sleep(backoff);
   }
 
-  throw lastError || new Error(`Gemini API failed after 3 attempts`);
+  throw lastError || new Error(`Gemini API failed across models: ${errors.join('; ')}`);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -769,8 +806,7 @@ function buildModelCandidates(configuredModel: string): string[] {
     preferredConfiguredModel,
     'gemini-2.5-flash',
     'gemini-2.5-pro',
-    'gemini-2.0-flash',
-    configuredModel,
+    ...(LEGACY_GEMINI_MODELS.has(configuredModel) ? [] : [configuredModel]),
   ].filter(Boolean))];
 }
 

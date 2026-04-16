@@ -212,9 +212,9 @@ export default function AgentDetailPage() {
                 <p className="text-slate-400 text-center py-8">No tickets found</p>
               ) : (
                 <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                  {sortedIssues.map(([subject, count], idx) => (
+                  {sortedIssues.map(([subject, count]) => (
                     <div
-                      key={idx}
+                      key={subject}
                       className="flex items-center justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-all"
                     >
                       <span className="text-sm truncate flex-1 mr-4" title={subject}>

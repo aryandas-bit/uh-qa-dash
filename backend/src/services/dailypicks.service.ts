@@ -143,8 +143,17 @@ export async function runDailyAudit(date: string, dateMode: DateMode = 'activity
 
   activeAudits.add(auditKey);
 
+  // Safety timeout: auto-remove audit key after 30 minutes in case batch hangs
+  const timeout = setTimeout(() => {
+    if (activeAudits.has(auditKey)) {
+      console.warn(`[DailyAudit] Timeout — force-removing stale audit key: ${auditKey}`);
+      activeAudits.delete(auditKey);
+    }
+  }, 30 * 60 * 1000);
+
   // Run analysis in background — don't await
   processAuditBatch(date, dateMode, unanalyzed).finally(() => {
+    clearTimeout(timeout);
     activeAudits.delete(auditKey);
   });
 
@@ -216,16 +225,26 @@ async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyP
       let auditMemories: AuditMemoryRecord[] = [];
       const issueSignature = buildIssueSignature(ticket);
       if (ticket.VISITOR_EMAIL) {
-        // Store a Promise — concurrent calls for same email share the same fetch
+        // Cache with error recovery — a failed fetch returns [] instead of poisoning the cache
         if (!historyCache.has(ticket.VISITOR_EMAIL)) {
-          historyCache.set(ticket.VISITOR_EMAIL, getCustomerHistory(ticket.VISITOR_EMAIL, 12));
+          historyCache.set(ticket.VISITOR_EMAIL,
+            getCustomerHistory(ticket.VISITOR_EMAIL, 12).catch(err => {
+              console.warn(`[DailyAudit] History fetch failed for ${ticket.VISITOR_EMAIL}:`, err.message);
+              return [];
+            })
+          );
         }
         const rawHistory = await historyCache.get(ticket.VISITOR_EMAIL)!;
         customerHistory = formatHistory(rawHistory, pick.ticketId, ticket.INITIALIZED_TIME);
 
         const memoryKey = `${ticket.VISITOR_EMAIL.toLowerCase()}::${issueSignature}`;
         if (!memoryCache.has(memoryKey)) {
-          memoryCache.set(memoryKey, getRelevantAuditMemories(ticket.VISITOR_EMAIL, issueSignature, 2));
+          memoryCache.set(memoryKey,
+            getRelevantAuditMemories(ticket.VISITOR_EMAIL, issueSignature, 2).catch(err => {
+              console.warn(`[DailyAudit] Memory fetch failed for ${memoryKey}:`, err.message);
+              return [];
+            })
+          );
         }
         auditMemories = await memoryCache.get(memoryKey)!;
       }

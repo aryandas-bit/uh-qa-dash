@@ -224,7 +224,7 @@ router.post('/ticket/:id/review', async (req, res) => {
     const { id } = req.params;
     const { status, note, reviewerName } = req.body;
 
-    if (!['approved', 'flagged'].includes(status)) {
+    if (!status || !['approved', 'flagged'].includes(status)) {
       return res.status(400).json({ error: 'Status must be "approved" or "flagged"' });
     }
 
@@ -238,7 +238,7 @@ router.post('/ticket/:id/review', async (req, res) => {
       agentEmail: ticket?.AGENT_EMAIL,
       csat: ticket?.TICKET_CSAT,
       day: ticket?.DAY,
-    });
+    }).catch(err => console.error('[Sheets] Failed to sync review:', err.message));
 
     res.json({ ticketId: id, review });
   } catch (error) {
@@ -252,7 +252,7 @@ router.delete('/ticket/:id/review', async (req, res) => {
   try {
     const { id } = req.params;
     await deleteQAReview(id);
-    deleteReviewFromSheet(id); // non-blocking
+    deleteReviewFromSheet(id).catch(err => console.error('[Sheets] Failed to delete review:', err.message));
     res.json({ ticketId: id, review: null });
   } catch (error) {
     console.error('Error deleting review:', error);

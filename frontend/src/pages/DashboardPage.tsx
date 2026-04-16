@@ -229,9 +229,9 @@ export default function DashboardPage() {
                 <p className="text-slate-400 text-center py-4">No data</p>
               ) : (
                 <div className="space-y-2">
-                  {topIssues.slice(0, 5).map((issue: any, idx: number) => (
+                  {topIssues.slice(0, 5).map((issue: any) => (
                     <div
-                      key={idx}
+                      key={issue.category || issue.count}
                       className="flex items-center justify-between p-2 rounded-lg bg-slate-100"
                     >
                       <span className="text-sm truncate flex-1 mr-2">
