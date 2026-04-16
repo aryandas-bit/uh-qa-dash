@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --import tsx/esm src/app.ts",
-    "build": "tsc",
+    "build": "tsc && cp -r src/data dist/",
     "start": "node dist/app.js"
   },
   "dependencies": {
