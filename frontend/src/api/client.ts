@@ -53,8 +53,8 @@ export const analysisApi = {
   getSOPs: () => api.get('/analysis/sops'),
   getTicketAnalysis: (id: string, refresh = false) =>
     api.get(`/analysis/ticket/${id}?refresh=${refresh}`),
-  batchAnalyze: (date: string, agentEmail?: string, limit = 20) =>
-    api.post('/analysis/batch', { date, agentEmail, limit, prioritizeFlagged: true }, { timeout: 120000 }), // 2 min for AI
+  batchAnalyze: (date: string, agentEmail?: string, limit = 20, dateMode: DateMode = 'activity', ticketIds?: string[]) =>
+    api.post('/analysis/batch', { date, agentEmail, limit, prioritizeFlagged: true, dateMode, ticketIds }, { timeout: 120000 }), // 2 min per chunk
   getAgentSummary: (email: string, date: string) =>
     api.get(`/analysis/agent/${encodeURIComponent(email)}/summary?date=${date}`),
   reviewTicket: (id: string, status: 'approved' | 'flagged', note?: string, reviewerName?: string) =>
@@ -63,6 +63,8 @@ export const analysisApi = {
     api.delete(`/analysis/ticket/${id}/review`),
   getReviews: (ticketIds?: string[]) =>
     api.get(`/analysis/reviews${ticketIds?.length ? `?ticketIds=${ticketIds.join(',')}` : ''}`),
+  getCachedScores: (ticketIds: string[]) =>
+    api.get(`/analysis/cached-scores${ticketIds.length ? `?ticketIds=${ticketIds.join(',')}` : ''}`),
 };
 
 export const customersApi = {

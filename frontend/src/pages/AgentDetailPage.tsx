@@ -1,10 +1,17 @@
 import { useParams, useSearchParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Mail, Ticket, Clock, CheckCircle, AlertTriangle, Calendar, CalendarCheck, ThumbsUp, Flag } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Mail, Ticket, Clock, CheckCircle, AlertTriangle, Calendar, CalendarCheck, ThumbsUp, Flag, Skull, Sparkles, Loader2 } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
 import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { agentsApi, analysisApi } from '../api/client';
 import type { DateMode } from '../api/client';
+
+interface ScoreEntry {
+  qaScore: number;
+  summary: string | null;
+  deductions: Array<{ category: string; points: number; reason: string }>;
+}
 export default function AgentDetailPage() {
   const { email } = useParams<{ email: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -50,6 +57,72 @@ export default function AgentDetailPage() {
     staleTime: 1000 * 60 * 5,
   });
   const reviews: Record<string, { status: string; note: string | null }> = reviewsData?.data?.reviews || {};
+
+  // Fetch cached QA scores for all loaded tickets
+  const { data: scoresData } = useQuery({
+    queryKey: ['cached-scores', ticketIds.join(',')],
+    queryFn: () => analysisApi.getCachedScores(ticketIds),
+    enabled: ticketIds.length > 0,
+    staleTime: 1000 * 60 * 5,
+  });
+  const cachedScores: Record<string, ScoreEntry> = scoresData?.data?.scores || {};
+  // True only once the scores query has actually resolved (not just "not loading")
+  const scoresReady = scoresData !== undefined;
+
+  // Bulk QC analysis state
+  const queryClient = useQueryClient();
+  const [qcRunning, setQcRunning] = useState(false);
+  const [qcProgress, setQcProgress] = useState<{ done: number; total: number } | null>(null);
+  // Track which (email, date, dateMode) combos have been auto-triggered so we don't repeat
+  const autoTriggeredKey = useRef('');
+
+  const CHUNK_SIZE = 8;
+
+  const runBulkQC = async () => {
+    if (tickets.length === 0 || qcRunning) return;
+    setQcRunning(true);
+    setQcProgress(null);
+
+    // Chunk all ticket IDs — backend will skip already-scored ones
+    const allIds = tickets.map((t: any) => String(t.TICKET_ID));
+    const chunks: string[][] = [];
+    for (let i = 0; i < allIds.length; i += CHUNK_SIZE) {
+      chunks.push(allIds.slice(i, i + CHUNK_SIZE));
+    }
+
+    setQcProgress({ done: 0, total: allIds.length });
+
+    for (const chunk of chunks) {
+      try {
+        await analysisApi.batchAnalyze(date, undefined, chunk.length, dateMode, chunk);
+        // Refresh scores after each chunk so rows update progressively
+        await queryClient.invalidateQueries({ queryKey: ['cached-scores'] });
+      } catch (err) {
+        console.error('QC chunk failed:', err);
+      }
+      setQcProgress(prev => ({ done: Math.min((prev?.done ?? 0) + chunk.length, allIds.length), total: allIds.length }));
+    }
+
+    setQcRunning(false);
+    setQcProgress(null);
+  };
+
+  // Auto-trigger QC analysis when the page loads and the scores query has resolved with no data
+  const currentKey = `${decodedEmail}:${date}:${dateMode}`;
+  useEffect(() => {
+    if (
+      !ticketsLoading &&
+      scoresReady &&           // scores query actually completed (not just "not loading")
+      !qcRunning &&
+      tickets.length > 0 &&
+      Object.keys(cachedScores).length === 0 &&
+      autoTriggeredKey.current !== currentKey
+    ) {
+      autoTriggeredKey.current = currentKey;
+      runBulkQC();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketsLoading, scoresReady, currentKey]);
 
   // Calculate stats
   const totalTickets = tickets.length;
@@ -103,6 +176,68 @@ export default function AgentDetailPage() {
       <span title={tooltip} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-uh-error/20 text-uh-error">
         <Flag size={9} /> Flagged
       </span>
+    );
+  };
+
+  // QC Score column — score pill + per-category deduction breakdown
+  const QCScorePill = ({ ticketId }: { ticketId: string }) => {
+    const s = cachedScores[ticketId];
+    if (!s) return <span className="text-slate-300 text-sm">—</span>;
+
+    const scoreColor =
+      s.qaScore >= 80
+        ? 'bg-uh-success/20 text-uh-success'
+        : s.qaScore >= 60
+        ? 'bg-uh-warning/20 text-uh-warning'
+        : 'bg-uh-error/20 text-uh-error';
+
+    const deductionColor = (pts: number) =>
+      pts <= -40 ? 'bg-uh-error/20 text-uh-error' : 'bg-slate-100 text-slate-500';
+
+    return (
+      <div className="flex flex-col gap-1 min-w-0">
+        <span
+          title={s.summary || ''}
+          className={`px-2 py-0.5 rounded-full text-xs font-semibold self-start ${scoreColor}`}
+        >
+          {Math.round(s.qaScore)}
+        </span>
+        {s.deductions && s.deductions.length > 0 && (
+          <div className="flex flex-col gap-0.5">
+            {s.deductions.map((d, i) => (
+              <span
+                key={i}
+                title={d.reason}
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${deductionColor(d.points)}`}
+              >
+                <span className="capitalize">{d.category}</span>
+                <span className="font-semibold">{d.points}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // QC Review column — Fatal badge + manual review badge
+  const QCReviewCell = ({ ticketId }: { ticketId: string }) => {
+    const s = cachedScores[ticketId];
+    const isFatal = s !== undefined && s.qaScore < 50;
+    const hasReview = !!reviews[ticketId];
+    if (!isFatal && !hasReview) return <span className="text-slate-300 text-sm">—</span>;
+    return (
+      <div className="flex items-center gap-1 flex-wrap">
+        {isFatal && (
+          <span
+            title="QC score below 50 — fatal issue detected"
+            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-uh-error text-white"
+          >
+            <Skull size={9} /> Fatal
+          </span>
+        )}
+        {hasReview && <ReviewBadge ticketId={ticketId} />}
+      </div>
     );
   };
 
@@ -280,7 +415,40 @@ export default function AgentDetailPage() {
 
           {/* Full Tickets Table */}
           <div className="card mt-6">
-            <h2 className="text-lg font-semibold mb-4">All Tickets ({totalTickets})</h2>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-semibold">All Tickets ({totalTickets})</h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {Object.keys(cachedScores).length > 0
+                    ? `${Object.keys(cachedScores).length} of ${totalTickets} scored`
+                    : 'No QC scores yet — click Run QC to analyze'}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                {qcRunning && qcProgress && (
+                  <span className="text-xs text-slate-400 tabular-nums">
+                    {qcProgress.done} / {qcProgress.total}
+                  </span>
+                )}
+                <button
+                  onClick={runBulkQC}
+                  disabled={qcRunning || tickets.length === 0}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-uh-purple text-white hover:bg-uh-purple/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  {qcRunning ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      Analyzing…
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={14} />
+                      Run QC
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -290,15 +458,19 @@ export default function AgentDetailPage() {
                     <th className="pb-3 px-4">Customer</th>
                     <th className="pb-3 px-4">Status</th>
                     <th className="pb-3 px-4">Response</th>
-                    <th className="pb-3 px-4">CSAT</th>
+                    <th className="pb-3 px-4">QC Score</th>
                     <th className="pb-3 pl-4">QC Review</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {tickets.slice(0, 50).map((ticket: any) => (
+                  {tickets.map((ticket: any) => (
                     <tr
                       key={ticket.TICKET_ID}
-                      className="hover:bg-slate-50 transition-colors rounded-lg"
+                      className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${
+                        (cachedScores[String(ticket.TICKET_ID)]?.qaScore ?? 100) < 50
+                          ? 'bg-uh-error/5'
+                          : ''
+                      }`}
                     >
                       <td className="py-3 pr-4">
                         <Link
@@ -338,28 +510,15 @@ export default function AgentDetailPage() {
                         {formatTime(ticket.FIRST_RESPONSE_DURATION_SECONDS || 0)}
                       </td>
                       <td className="py-3 px-4">
-                        {ticket.TICKET_CSAT && ticket.TICKET_CSAT !== 'NA' ? (
-                          <span className={`text-sm font-medium ${
-                            ticket.TICKET_CSAT < 3 ? 'text-uh-error' : 'text-uh-success'
-                          }`}>
-                            {ticket.TICKET_CSAT}
-                          </span>
-                        ) : (
-                          <span className="text-slate-300 text-sm">-</span>
-                        )}
+                        <QCScorePill ticketId={String(ticket.TICKET_ID)} />
                       </td>
                       <td className="py-3 pl-4">
-                        <ReviewBadge ticketId={String(ticket.TICKET_ID)} />
+                        <QCReviewCell ticketId={String(ticket.TICKET_ID)} />
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {tickets.length > 50 && (
-                <p className="text-center text-slate-400 text-sm mt-4">
-                  Showing 50 of {tickets.length} tickets
-                </p>
-              )}
             </div>
           </div>
         </>

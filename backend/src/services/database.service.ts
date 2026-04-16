@@ -109,6 +109,19 @@ const initPromise = reviewsDb.execute(`
       source TEXT
     )
   `)
+).then(() =>
+  reviewsDb.execute(`
+    CREATE TABLE IF NOT EXISTS qa_scores (
+      ticket_id TEXT PRIMARY KEY,
+      qa_score REAL NOT NULL,
+      summary TEXT,
+      analyzed_at TEXT NOT NULL
+    )
+  `)
+).then(() =>
+  reviewsDb.execute(`ALTER TABLE qa_scores ADD COLUMN deductions_json TEXT`).catch(() => {
+    /* column already exists */
+  })
 );
 
 export interface DailyPick {
@@ -896,6 +909,93 @@ export async function getDailyInsights(date: string, dateMode: DateMode = 'activ
     args: [date],
   });
   return result.rows[0];
+}
+
+// Fetch a specific set of tickets by ID in one query
+export async function getTicketsByIds(ticketIds: string[]): Promise<TicketRow[]> {
+  if (ticketIds.length === 0) return [];
+  const placeholders = ticketIds.map(() => '?').join(',');
+  const result = await mainDb.execute({
+    sql: `SELECT
+            TICKET_ID,
+            MAX(VISITOR_NAME) as VISITOR_NAME,
+            MAX(VISITOR_EMAIL) as VISITOR_EMAIL,
+            MAX(SUBJECT) as SUBJECT,
+            MAX(TAGS) as TAGS,
+            MAX(TICKET_STATUS) as TICKET_STATUS,
+            MAX(PRIORITY) as PRIORITY,
+            MAX(AGENT_EMAIL) as AGENT_EMAIL,
+            MAX(RESOLVED_BY) as RESOLVED_BY,
+            MAX(FIRST_RESPONSE_DURATION_SECONDS) as FIRST_RESPONSE_DURATION_SECONDS,
+            MAX(AVG_RESPONSE_TIME_SECONDS) as AVG_RESPONSE_TIME_SECONDS,
+            MAX(SPENT_TIME_SECONDS) as SPENT_TIME_SECONDS,
+            MAX(TICKET_CSAT) as TICKET_CSAT,
+            MAX(AGENT_RATING) as AGENT_RATING,
+            MAX(MESSAGES_JSON) as MESSAGES_JSON,
+            MAX(MESSAGE_COUNT) as MESSAGE_COUNT,
+            MAX(USER_MESSAGE_COUNT) as USER_MESSAGE_COUNT,
+            MAX(AGENT_MESSAGE_COUNT) as AGENT_MESSAGE_COUNT,
+            MAX(DAY) as DAY,
+            MAX(GROUP_NAME) as GROUP_NAME,
+            MAX(INITIALIZED_TIME) as INITIALIZED_TIME,
+            MAX(RESOLVED_TIME) as RESOLVED_TIME
+          FROM raw_tickets
+          WHERE TICKET_ID IN (${placeholders})
+          GROUP BY TICKET_ID`,
+    args: ticketIds,
+  });
+  return result.rows as unknown as TicketRow[];
+}
+
+export interface QADeduction {
+  category: string;
+  points: number;
+  reason: string;
+}
+
+// Persist a QA score for a ticket (called whenever AI analysis runs)
+export async function saveQAScore(
+  ticketId: string,
+  qaScore: number,
+  summary?: string,
+  deductions?: QADeduction[]
+): Promise<void> {
+  await initPromise;
+  await reviewsDb.execute({
+    sql: `INSERT OR REPLACE INTO qa_scores (ticket_id, qa_score, summary, deductions_json, analyzed_at)
+          VALUES (?, ?, ?, ?, datetime('now'))`,
+    args: [ticketId, qaScore, summary || null, deductions ? JSON.stringify(deductions) : null],
+  });
+}
+
+// Bulk-fetch persisted QA scores for a list of ticket IDs
+export async function getQAScoresBulk(
+  ticketIds: string[]
+): Promise<Record<string, { qaScore: number; summary: string | null; deductions: QADeduction[] }>> {
+  if (ticketIds.length === 0) return {};
+  await initPromise;
+  const placeholders = ticketIds.map(() => '?').join(',');
+  const result = await reviewsDb.execute({
+    sql: `SELECT ticket_id, qa_score as qaScore, summary, deductions_json
+          FROM qa_scores
+          WHERE ticket_id IN (${placeholders})`,
+    args: ticketIds,
+  });
+  const rows = result.rows as unknown as Array<{
+    ticket_id: string;
+    qaScore: number;
+    summary: string | null;
+    deductions_json: string | null;
+  }>;
+  const out: Record<string, { qaScore: number; summary: string | null; deductions: QADeduction[] }> = {};
+  rows.forEach(row => {
+    out[row.ticket_id] = {
+      qaScore: row.qaScore,
+      summary: row.summary,
+      deductions: row.deductions_json ? JSON.parse(row.deductions_json) : [],
+    };
+  });
+  return out;
 }
 
 export { mainDb as db };
