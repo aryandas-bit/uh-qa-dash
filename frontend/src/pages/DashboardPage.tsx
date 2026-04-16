@@ -317,7 +317,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Daily Audit Section */}
-          {effectiveDate && <DailyAuditSection date={effectiveDate} />}
+          {effectiveDate && <DailyAuditSection date={effectiveDate} dateMode={dateMode} />}
 
           {/* Agent List */}
           <div className="card">
@@ -387,50 +387,80 @@ export default function DashboardPage() {
 }
 
 // Daily Audit Section — shows picks and allows triggering batch analysis
-function DailyAuditSection({ date }: { date: string }) {
+type DailyPickRow = {
+  pickDate: string;
+  dateMode: DateMode;
+  agentEmail: string;
+  ticketId: string;
+  pickOrder: number;
+  analyzed: boolean;
+  analysisStatus: string | null;
+  ticket: {
+    ticketId: string;
+    subject: string | null;
+    customerEmail: string | null;
+    status: string | null;
+    priority: string | null;
+    groupName: string | null;
+    day: string | null;
+    responseTimeSeconds: number | null;
+    hasStoredAnalysis: boolean;
+  } | null;
+};
+
+function DailyAuditSection({ date, dateMode }: { date: string; dateMode: DateMode }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [isPolling, setIsPolling] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
 
   const { data: picksData, isLoading: picksLoading } = useQuery({
-    queryKey: ['daily-picks', date],
-    queryFn: () => dailyPicksApi.getPicks(date),
+    queryKey: ['daily-picks', date, dateMode],
+    queryFn: () => dailyPicksApi.getPicks(date, dateMode),
     enabled: !!date,
-    staleTime: 1000 * 60 * 5,
+    staleTime: 1000 * 30,
   });
 
   const { data: statusData } = useQuery({
-    queryKey: ['daily-picks-status', date],
-    queryFn: () => dailyPicksApi.getStatus(date),
+    queryKey: ['daily-picks-status', date, dateMode],
+    queryFn: () => dailyPicksApi.getStatus(date, dateMode),
     enabled: !!date && isPolling,
-    refetchInterval: isPolling ? 8000 : false,
+    refetchInterval: isPolling ? 3000 : false,
   });
 
   const runAudit = useMutation({
-    mutationFn: () => dailyPicksApi.runAudit(date),
+    mutationFn: () => dailyPicksApi.runAudit(date, dateMode),
     onSuccess: () => {
       setIsPolling(true);
-      queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date] });
+      queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode] });
+      queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] });
     },
   });
 
   const status = statusData?.data;
   const picks = picksData?.data;
   const byAgent = picks?.byAgent || {};
-  const agentEmails = Object.keys(byAgent);
+  const agentEmails = Object.keys(byAgent).sort((left, right) => {
+    const leftData = byAgent[left];
+    const rightData = byAgent[right];
+    if (rightData.analyzed !== leftData.analyzed) return rightData.analyzed - leftData.analyzed;
+    if (rightData.total !== leftData.total) return rightData.total - leftData.total;
+    return left.localeCompare(right);
+  });
   const totalPicks = picks?.totalPicks || 0;
-  const analyzed = status?.analyzed || 0;
+  const analyzed = status?.analyzed ?? picks?.picks?.filter((pick: DailyPickRow) => pick.analyzed).length ?? 0;
+  const errors = status?.errors || 0;
   const inProgress = status?.inProgress || false;
   const progressPct = totalPicks > 0 ? Math.round((analyzed / totalPicks) * 100) : 0;
 
   // Stop polling when audit completes
   useEffect(() => {
-    if (isPolling && status && !status.inProgress && status.analyzed > 0) {
+    if (isPolling && status && !status.inProgress) {
       setIsPolling(false);
-      queryClient.invalidateQueries({ queryKey: ['daily-picks', date] });
+      queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] });
+      queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode] });
     }
-  }, [status, isPolling, date, queryClient]);
+  }, [status, isPolling, date, dateMode, queryClient]);
 
   if (picksLoading) return null;
 
@@ -441,7 +471,7 @@ function DailyAuditSection({ date }: { date: string }) {
           <h2 className="text-lg font-semibold">Daily Audit</h2>
           <p className="text-slate-500 text-sm">
             {totalPicks > 0
-              ? `${totalPicks} tickets sampled across ${agentEmails.length} agents`
+              ? `${totalPicks} tickets sampled across ${agentEmails.length} agents (${dateMode === 'activity' ? 'activity date' : 'created date'})`
               : 'Generate random ticket picks for QA review'}
           </p>
         </div>
@@ -463,7 +493,7 @@ function DailyAuditSection({ date }: { date: string }) {
         <div className="mb-4">
           <div className="flex justify-between text-sm text-slate-500 mb-1">
             <span>{analyzed} / {totalPicks} analyzed</span>
-            <span>{progressPct}%</span>
+            <span>{progressPct}%{errors > 0 ? ` • ${errors} failed` : ''}</span>
           </div>
           <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
             <div
@@ -476,10 +506,11 @@ function DailyAuditSection({ date }: { date: string }) {
 
       {/* Per-agent breakdown */}
       {agentEmails.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-          {agentEmails.slice(0, 12).map(email => {
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+          {agentEmails.map(email => {
             const agent = byAgent[email];
             const name = email.split('@')[0].replace(/[._]/g, ' ').replace(/_ext$/, '');
+            const pct = agent.total > 0 ? Math.round((agent.analyzed / agent.total) * 100) : 0;
             return (
               <button
                 key={email}
@@ -491,8 +522,16 @@ function DailyAuditSection({ date }: { date: string }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium truncate">{name}</p>
-                  <p className="text-[10px] text-slate-400">
-                    {agent.analyzed}/{agent.total} done
+                  <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                    <span>{agent.analyzed}/{agent.total} done</span>
+                    <span>•</span>
+                    <span>{pct}%</span>
+                    {agent.errors > 0 && (
+                      <>
+                        <span>•</span>
+                        <span className="text-uh-error">{agent.errors} failed</span>
+                      </>
+                    )}
                   </p>
                 </div>
               </button>
@@ -509,7 +548,7 @@ function DailyAuditSection({ date }: { date: string }) {
           picks={picks?.picks || []}
           onClose={() => setSelectedAgent(null)}
           onTicketClick={(ticketId) => {
-            navigate(`/ticket/${ticketId}`);
+            navigate(`/ticket/${ticketId}?refresh=true`);
             setSelectedAgent(null);
           }}
         />
@@ -532,7 +571,9 @@ function AnalyzedTicketsModal({
   onClose: () => void;
   onTicketClick: (ticketId: string) => void;
 }) {
-  const agentPicks = picks.filter(p => p.agentEmail === email);
+  const agentPicks = picks
+    .filter((pick) => pick.agentEmail === email)
+    .sort((left, right) => left.pickOrder - right.pickOrder);
   const name = email.split('@')[0].replace(/[._]/g, ' ').replace(/_ext$/, '');
 
   return (
@@ -545,7 +586,7 @@ function AnalyzedTicketsModal({
         <div className="flex items-center justify-between p-6 border-b border-slate-200">
           <div>
             <h2 className="text-xl font-semibold">{name}'s Analyzed Tickets</h2>
-            <p className="text-sm text-slate-500 mt-1">{date} • {agentPicks.length} tickets</p>
+            <p className="text-sm text-slate-500 mt-1">{date} • {agentPicks.length} sampled tickets</p>
           </div>
           <button
             onClick={onClose}
@@ -573,7 +614,19 @@ function AnalyzedTicketsModal({
                       <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
                         #{pick.pickOrder}
                       </span>
+                      {pick.ticket?.status && (
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          pick.ticket.status === 'RESOLVED'
+                            ? 'bg-uh-success/20 text-uh-success'
+                            : 'bg-uh-warning/20 text-uh-warning'
+                        }`}>
+                          {pick.ticket.status}
+                        </span>
+                      )}
                     </div>
+                    <p className="text-sm text-slate-700 truncate">
+                      {pick.ticket?.subject || 'No subject'}
+                    </p>
                     <div className="flex items-center gap-2">
                       {pick.analyzed ? (
                         <>
@@ -583,11 +636,25 @@ function AnalyzedTicketsModal({
                             <AlertCircle size={14} className="text-uh-error" />
                           )}
                           <span className="text-xs text-slate-500">
-                            {pick.analysisStatus === 'success' ? 'Analyzed' : 'Analysis failed'}
+                            {pick.analysisStatus === 'success'
+                              ? (pick.ticket?.hasStoredAnalysis ? 'Analyzed and cached' : 'Analyzed')
+                              : 'Analysis failed'}
                           </span>
                         </>
                       ) : (
                         <span className="text-xs text-slate-400">Pending</span>
+                      )}
+                      {pick.ticket?.groupName && (
+                        <>
+                          <span className="text-slate-300">•</span>
+                          <span className="text-xs text-slate-500 truncate">{pick.ticket.groupName}</span>
+                        </>
+                      )}
+                      {pick.ticket?.customerEmail && (
+                        <>
+                          <span className="text-slate-300">•</span>
+                          <span className="text-xs text-slate-400 truncate">{pick.ticket.customerEmail}</span>
+                        </>
                       )}
                     </div>
                   </div>

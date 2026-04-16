@@ -761,11 +761,16 @@ function sleep(ms: number): Promise<void> {
 }
 
 function buildModelCandidates(configuredModel: string): string[] {
-  // Always try the explicitly configured model first, then fallbacks
+  const preferredConfiguredModel = LEGACY_GEMINI_MODELS.has(configuredModel)
+    ? 'gemini-2.5-flash'
+    : configuredModel;
+
   return [...new Set([
-    configuredModel,
+    preferredConfiguredModel,
     'gemini-2.5-flash',
+    'gemini-2.5-pro',
     'gemini-2.0-flash',
+    configuredModel,
   ].filter(Boolean))];
 }
 

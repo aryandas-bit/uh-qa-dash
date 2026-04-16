@@ -71,7 +71,10 @@ export const customersApi = {
 };
 
 export const dailyPicksApi = {
-  getPicks: (date: string) => api.get(`/daily-picks?date=${date}`),
-  runAudit: (date: string) => api.post('/daily-picks/run-audit', { date }, { timeout: 300000 }),
-  getStatus: (date: string) => api.get(`/daily-picks/status?date=${date}`),
+  getPicks: (date: string, dateMode: DateMode = 'activity') =>
+    api.get(`/daily-picks?date=${date}&dateMode=${dateMode}`),
+  runAudit: (date: string, dateMode: DateMode = 'activity') =>
+    api.post('/daily-picks/run-audit', { date, dateMode }, { timeout: 300000 }),
+  getStatus: (date: string, dateMode: DateMode = 'activity') =>
+    api.get(`/daily-picks/status?date=${date}&dateMode=${dateMode}`),
 };

@@ -240,7 +240,7 @@ export default function AgentDetailPage() {
                     <Link
                       key={ticket.TICKET_ID}
                       to={`/ticket/${ticket.TICKET_ID}`}
-                      className="block p-3 rounded-xl bg-white shadow-elevation-1 hover:shadow-elevation-2 transition-all duration-md3 ease-md3"
+                      className="block p-3 rounded-xl bg-slate-50 hover:bg-slate-100 transition-colors duration-md3 ease-md3"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">

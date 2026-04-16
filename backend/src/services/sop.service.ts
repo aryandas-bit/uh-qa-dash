@@ -1,8 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 
-// Use absolute path from environment, or default relative to cwd
-const sopsPath = process.env.SOPS_PATH || path.join(process.cwd(), '../../all_sops.json');
+const sopsPath = process.env.SOPS_PATH
+  || path.resolve(process.cwd(), '../all_sops.json');
+
+let didWarnMissingSops = false;
 
 export interface SOP {
   title: string;
@@ -40,7 +42,10 @@ export function loadSOPs(): SOP[] {
     console.log(`Loaded ${sopsCache.length} SOPs`);
     return sopsCache;
   } catch (error) {
-    console.error('Failed to load SOPs:', error);
+    if (!didWarnMissingSops) {
+      console.warn(`SOP file not loaded from ${sopsPath}. Continuing without SOP matching.`);
+      didWarnMissingSops = true;
+    }
     return [];
   }
 }

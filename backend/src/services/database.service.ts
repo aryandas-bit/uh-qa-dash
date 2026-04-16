@@ -89,17 +89,22 @@ const initPromise = reviewsDb.execute(`
     CREATE TABLE IF NOT EXISTS daily_picks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       pick_date TEXT NOT NULL,
+      date_mode TEXT NOT NULL DEFAULT 'activity',
       agent_email TEXT NOT NULL,
       ticket_id TEXT NOT NULL,
       pick_order INTEGER NOT NULL,
       analyzed INTEGER NOT NULL DEFAULT 0,
       analysis_status TEXT,
       created_at TEXT NOT NULL,
-      UNIQUE(pick_date, agent_email, ticket_id)
+      UNIQUE(pick_date, date_mode, agent_email, ticket_id)
     )
   `)
 ).then(() =>
-  reviewsDb.execute(`CREATE INDEX IF NOT EXISTS idx_daily_picks_date ON daily_picks(pick_date)`).catch(() => {})
+  reviewsDb.execute(`ALTER TABLE daily_picks ADD COLUMN date_mode TEXT NOT NULL DEFAULT 'activity'`).catch(() => {
+    /* column already exists */
+  })
+).then(() =>
+  reviewsDb.execute(`CREATE INDEX IF NOT EXISTS idx_daily_picks_date_mode ON daily_picks(pick_date, date_mode)`).catch(() => {})
 ).then(() =>
   reviewsDb.execute(`
     CREATE TABLE IF NOT EXISTS ticket_analyses (
@@ -113,6 +118,7 @@ const initPromise = reviewsDb.execute(`
 
 export interface DailyPick {
   pickDate: string;
+  dateMode: DateMode;
   agentEmail: string;
   ticketId: string;
   pickOrder: number;
@@ -120,37 +126,61 @@ export interface DailyPick {
   analysisStatus: string | null;
 }
 
-export async function getDailyPicksFromDb(date: string): Promise<DailyPick[]> {
+export async function getDailyPicksFromDb(date: string, dateMode: DateMode = 'activity'): Promise<DailyPick[]> {
   await initPromise;
   const result = await reviewsDb.execute({
-    sql: `SELECT pick_date as pickDate, agent_email as agentEmail, ticket_id as ticketId,
+    sql: `SELECT pick_date as pickDate, date_mode as dateMode, agent_email as agentEmail, ticket_id as ticketId,
                  pick_order as pickOrder, analyzed, analysis_status as analysisStatus
-          FROM daily_picks WHERE pick_date = ? ORDER BY agent_email, pick_order`,
-    args: [date],
+          FROM daily_picks WHERE pick_date = ? AND date_mode = ? ORDER BY agent_email, pick_order`,
+    args: [date, dateMode],
   });
   return (result.rows as unknown as any[]).map(r => ({
     ...r,
-    analyzed: Boolean(r.analyzed),
+    analyzed: Boolean(r.analyzed) && r.analysisStatus === 'success',
   }));
 }
 
-export async function saveDailyPicks(picks: Array<{ pickDate: string; agentEmail: string; ticketId: string; pickOrder: number }>): Promise<void> {
+export async function saveDailyPicks(picks: Array<{ pickDate: string; dateMode: DateMode; agentEmail: string; ticketId: string; pickOrder: number; analyzed?: boolean; analysisStatus?: string | null }>): Promise<void> {
   await initPromise;
   const now = new Date().toISOString();
   for (const pick of picks) {
     await reviewsDb.execute({
-      sql: `INSERT OR IGNORE INTO daily_picks (pick_date, agent_email, ticket_id, pick_order, analyzed, created_at)
-            VALUES (?, ?, ?, ?, 0, ?)`,
-      args: [pick.pickDate, pick.agentEmail, pick.ticketId, pick.pickOrder, now],
+      sql: `INSERT OR IGNORE INTO daily_picks (pick_date, date_mode, agent_email, ticket_id, pick_order, analyzed, analysis_status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        pick.pickDate,
+        pick.dateMode,
+        pick.agentEmail,
+        pick.ticketId,
+        pick.pickOrder,
+        pick.analyzed ? 1 : 0,
+        pick.analysisStatus || null,
+        now
+      ],
     });
   }
 }
 
-export async function markPickAnalyzed(date: string, ticketId: string, status: string): Promise<void> {
+export async function markPickAnalyzed(date: string, dateMode: DateMode, ticketId: string, status: string): Promise<void> {
   await initPromise;
   await reviewsDb.execute({
-    sql: `UPDATE daily_picks SET analyzed = 1, analysis_status = ? WHERE pick_date = ? AND ticket_id = ?`,
-    args: [status, date, ticketId],
+    sql: `UPDATE daily_picks
+          SET analyzed = ?, analysis_status = ?
+          WHERE pick_date = ? AND date_mode = ? AND ticket_id = ?`,
+    args: [status === 'success' ? 1 : 0, status, date, dateMode, ticketId],
+  });
+}
+
+export async function syncDailyPickAnalysisFlags(date: string, dateMode: DateMode = 'activity'): Promise<void> {
+  await initPromise;
+  await reviewsDb.execute({
+    sql: `UPDATE daily_picks
+          SET analyzed = 1,
+              analysis_status = 'success'
+          WHERE pick_date = ?
+            AND date_mode = ?
+            AND ticket_id IN (SELECT ticket_id FROM ticket_analyses)`,
+    args: [date, dateMode],
   });
 }
 
@@ -182,6 +212,19 @@ export async function getStoredTicketAnalysis(ticketId: string): Promise<object 
   }
 }
 
+export async function getStoredTicketAnalysisIds(ticketIds: string[]): Promise<Set<string>> {
+  await initPromise;
+  if (ticketIds.length === 0) return new Set();
+
+  const placeholders = ticketIds.map(() => '?').join(',');
+  const result = await reviewsDb.execute({
+    sql: `SELECT ticket_id as ticketId FROM ticket_analyses WHERE ticket_id IN (${placeholders})`,
+    args: ticketIds,
+  });
+
+  return new Set((result.rows as unknown as any[]).map((row) => String(row.ticketId)));
+}
+
 export async function getActiveAgentEmails(date: string, dateMode: DateMode = 'activity'): Promise<string[]> {
   await initMainPromise;
   const dateCondition = dateMode === 'initialized' ? 'DATE(INITIALIZED_TIME) = ?' : 'DAY = ?';
@@ -200,6 +243,99 @@ export async function getAgentTicketIds(agentEmail: string, date: string, dateMo
     args: [agentEmail, date],
   });
   return (result.rows as unknown as any[]).map(r => String(r.TICKET_ID));
+}
+
+export interface DailyPickCandidate {
+  ticketId: string;
+  agentEmail: string;
+  initializedTime: string | null;
+}
+
+export async function getDailyPickCandidates(date: string, dateMode: DateMode = 'activity'): Promise<DailyPickCandidate[]> {
+  await initMainPromise;
+  const dateCondition = dateMode === 'initialized' ? 'DATE(INITIALIZED_TIME) = ?' : 'DAY = ?';
+  const result = await mainDb.execute({
+    sql: `SELECT
+            AGENT_EMAIL as agentEmail,
+            TICKET_ID as ticketId,
+            MAX(INITIALIZED_TIME) as initializedTime
+          FROM raw_tickets
+          WHERE ${dateCondition}
+            AND AGENT_EMAIL IS NOT NULL
+            AND AGENT_EMAIL != ''
+            AND TICKET_ID IS NOT NULL
+          GROUP BY AGENT_EMAIL, TICKET_ID
+          ORDER BY AGENT_EMAIL ASC, MAX(INITIALIZED_TIME) DESC`,
+    args: [date],
+  });
+  return (result.rows as unknown as any[]).map((row) => ({
+    ticketId: String(row.ticketId),
+    agentEmail: String(row.agentEmail),
+    initializedTime: row.initializedTime ? String(row.initializedTime) : null,
+  }));
+}
+
+export interface DailyPickTicketSummary {
+  ticketId: string;
+  subject: string | null;
+  customerEmail: string | null;
+  status: string | null;
+  priority: string | null;
+  groupName: string | null;
+  day: string | null;
+  responseTimeSeconds: number | null;
+  hasStoredAnalysis: boolean;
+}
+
+export async function getDailyPickTicketSummaries(ticketIds: string[]): Promise<Record<string, DailyPickTicketSummary>> {
+  await initPromise;
+  await initMainPromise;
+  if (ticketIds.length === 0) return {};
+
+  const placeholders = ticketIds.map(() => '?').join(',');
+  const [ticketsResult, analysesResult] = await Promise.all([
+    mainDb.execute({
+      sql: `SELECT
+              TICKET_ID as ticketId,
+              MAX(SUBJECT) as subject,
+              MAX(VISITOR_EMAIL) as customerEmail,
+              MAX(TICKET_STATUS) as status,
+              MAX(PRIORITY) as priority,
+              MAX(GROUP_NAME) as groupName,
+              MAX(DAY) as day,
+              MAX(FIRST_RESPONSE_DURATION_SECONDS) as responseTimeSeconds
+            FROM raw_tickets
+            WHERE TICKET_ID IN (${placeholders})
+            GROUP BY TICKET_ID`,
+      args: ticketIds,
+    }),
+    reviewsDb.execute({
+      sql: `SELECT ticket_id as ticketId FROM ticket_analyses WHERE ticket_id IN (${placeholders})`,
+      args: ticketIds,
+    }),
+  ]);
+
+  const analyzedIds = new Set((analysesResult.rows as unknown as any[]).map((row) => String(row.ticketId)));
+  const out: Record<string, DailyPickTicketSummary> = {};
+
+  (ticketsResult.rows as unknown as any[]).forEach((row) => {
+    const ticketId = String(row.ticketId);
+    out[ticketId] = {
+      ticketId,
+      subject: row.subject || null,
+      customerEmail: row.customerEmail || null,
+      status: row.status || null,
+      priority: row.priority || null,
+      groupName: row.groupName || null,
+      day: row.day || null,
+      responseTimeSeconds: row.responseTimeSeconds === null || row.responseTimeSeconds === undefined
+        ? null
+        : Number(row.responseTimeSeconds),
+      hasStoredAnalysis: analyzedIds.has(ticketId),
+    };
+  });
+
+  return out;
 }
 
 export interface QAReview {
