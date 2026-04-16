@@ -267,7 +267,7 @@ router.delete('/ticket/:id/review', async (req, res) => {
 // POST /api/analysis/batch - Batch analyze tickets
 router.post('/batch', async (req, res) => {
   try {
-    const { date, agentEmail, limit = 20, prioritizeFlagged = true, dateMode = 'activity', ticketIds: specificIds } = req.body;
+    const { date, agentEmail, limit = 20, prioritizeFlagged = true, dateMode = 'activity', ticketIds: specificIds, forceRefresh = false } = req.body;
 
     // Get tickets to analyze
     let tickets;
@@ -291,14 +291,15 @@ router.post('/batch', async (req, res) => {
     const allTicketIds = ticketsTyped.map(t => String(t.TICKET_ID));
 
     // Check DB for already-persisted scores so we skip re-analysis after restarts
-    const dbScores = await getQAScoresBulk(allTicketIds);
+    // forceRefresh bypasses both memory and DB cache (e.g. after SOP updates)
+    const dbScores = forceRefresh ? {} : await getQAScoresBulk(allTicketIds);
 
     const cachedResults: any[] = [];
     const needsAnalysis: TicketRow[] = [];
 
     for (const t of ticketsTyped) {
       const id = String(t.TICKET_ID);
-      const memCached = analysisCache.get<any>(id);
+      const memCached = forceRefresh ? null : analysisCache.get<any>(id);
       if (memCached) {
         cachedResults.push({ ticketId: id, analysis: memCached, cached: true });
       } else if (dbScores[id]) {

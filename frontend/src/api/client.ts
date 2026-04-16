@@ -53,8 +53,8 @@ export const analysisApi = {
   getSOPs: () => api.get('/analysis/sops'),
   getTicketAnalysis: (id: string, refresh = false) =>
     api.get(`/analysis/ticket/${id}?refresh=${refresh}`),
-  batchAnalyze: (date: string, agentEmail?: string, limit = 20, dateMode: DateMode = 'activity', ticketIds?: string[]) =>
-    api.post('/analysis/batch', { date, agentEmail, limit, prioritizeFlagged: true, dateMode, ticketIds }, { timeout: 120000 }), // 2 min per chunk
+  batchAnalyze: (date: string, agentEmail?: string, limit = 20, dateMode: DateMode = 'activity', ticketIds?: string[], forceRefresh = false) =>
+    api.post('/analysis/batch', { date, agentEmail, limit, prioritizeFlagged: true, dateMode, ticketIds, forceRefresh }, { timeout: 120000 }),
   getAgentSummary: (email: string, date: string) =>
     api.get(`/analysis/agent/${encodeURIComponent(email)}/summary?date=${date}`),
   reviewTicket: (id: string, status: 'approved' | 'flagged', note?: string, reviewerName?: string) =>

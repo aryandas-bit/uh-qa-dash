@@ -78,12 +78,11 @@ export default function AgentDetailPage() {
 
   const CHUNK_SIZE = 8;
 
-  const runBulkQC = async () => {
+  const runBulkQC = async (forceRefresh = false) => {
     if (tickets.length === 0 || qcRunning) return;
     setQcRunning(true);
     setQcProgress(null);
 
-    // Chunk all ticket IDs — backend will skip already-scored ones
     const allIds = tickets.map((t: any) => String(t.TICKET_ID));
     const chunks: string[][] = [];
     for (let i = 0; i < allIds.length; i += CHUNK_SIZE) {
@@ -94,8 +93,7 @@ export default function AgentDetailPage() {
 
     for (const chunk of chunks) {
       try {
-        await analysisApi.batchAnalyze(date, undefined, chunk.length, dateMode, chunk);
-        // Refresh scores after each chunk so rows update progressively
+        await analysisApi.batchAnalyze(date, undefined, chunk.length, dateMode, chunk, forceRefresh);
         await queryClient.invalidateQueries({ queryKey: ['cached-scores'] });
       } catch (err) {
         console.error('QC chunk failed:', err);
@@ -119,7 +117,7 @@ export default function AgentDetailPage() {
       autoTriggeredKey.current !== currentKey
     ) {
       autoTriggeredKey.current = currentKey;
-      runBulkQC();
+      runBulkQC(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticketsLoading, scoresReady, currentKey]);
@@ -431,7 +429,7 @@ export default function AgentDetailPage() {
                   </span>
                 )}
                 <button
-                  onClick={runBulkQC}
+                  onClick={() => runBulkQC(false)}
                   disabled={qcRunning || tickets.length === 0}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-uh-purple text-white hover:bg-uh-purple/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
@@ -446,6 +444,15 @@ export default function AgentDetailPage() {
                       Run QC
                     </>
                   )}
+                </button>
+                <button
+                  onClick={() => runBulkQC(true)}
+                  disabled={qcRunning || tickets.length === 0}
+                  title="Re-score all tickets using the latest SOPs (ignores cached scores)"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-uh-purple text-uh-purple hover:bg-uh-purple/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  <Sparkles size={14} />
+                  Re-score
                 </button>
               </div>
             </div>
