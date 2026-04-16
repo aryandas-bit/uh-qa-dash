@@ -58,12 +58,18 @@ export default function AgentDetailPage() {
   });
   const reviews: Record<string, { status: string; note: string | null }> = reviewsData?.data?.reviews || {};
 
-  // Fetch cached QA scores for all loaded tickets
+  // Fetch cached QA scores for all loaded tickets.
+  // staleTime=0 ensures any user who opens (or refocuses) the page always gets
+  // the latest scores from the DB, even if someone else just ran QC.
+  const [qcRunning, setQcRunning] = useState(false);
+  const [qcProgress, setQcProgress] = useState<{ done: number; total: number } | null>(null);
   const { data: scoresData } = useQuery({
     queryKey: ['cached-scores', ticketIds.join(',')],
     queryFn: () => analysisApi.getCachedScores(ticketIds),
     enabled: ticketIds.length > 0,
-    staleTime: 1000 * 60 * 5,
+    staleTime: 0,
+    // Poll every 6 seconds while QC is running so scores appear as they are saved
+    refetchInterval: qcRunning ? 6000 : false,
   });
   const cachedScores: Record<string, ScoreEntry> = scoresData?.data?.scores || {};
   // True only once the scores query has actually resolved (not just "not loading")
@@ -71,8 +77,6 @@ export default function AgentDetailPage() {
 
   // Bulk QC analysis state
   const queryClient = useQueryClient();
-  const [qcRunning, setQcRunning] = useState(false);
-  const [qcProgress, setQcProgress] = useState<{ done: number; total: number } | null>(null);
   // Track which (email, date, dateMode) combos have been auto-triggered so we don't repeat
   const autoTriggeredKey = useRef('');
 
