@@ -91,10 +91,29 @@ export default function AgentDetailPage() {
 
     setQcProgress({ done: 0, total: allIds.length });
 
+    const scoresKey = ['cached-scores', allIds.join(',')];
+
     for (const chunk of chunks) {
       try {
-        await analysisApi.batchAnalyze(date, undefined, chunk.length, dateMode, chunk, forceRefresh);
-        await queryClient.invalidateQueries({ queryKey: ['cached-scores'] });
+        const resp = await analysisApi.batchAnalyze(date, undefined, chunk.length, dateMode, chunk, forceRefresh);
+        const results: any[] = resp.data?.results || [];
+
+        // Directly update the scores cache from the batch response — avoids
+        // a stale-cache roundtrip and shows scores immediately after each chunk.
+        queryClient.setQueryData(scoresKey, (old: any) => {
+          const existing: Record<string, ScoreEntry> = old?.data?.scores || {};
+          const merged = { ...existing };
+          results.forEach((r: any) => {
+            if (r.analysis?.qaScore !== undefined) {
+              merged[String(r.ticketId)] = {
+                qaScore: r.analysis.qaScore,
+                summary: r.analysis.summary ?? null,
+                deductions: r.analysis.deductions ?? [],
+              };
+            }
+          });
+          return { ...(old ?? {}), data: { scores: merged } };
+        });
       } catch (err) {
         console.error('QC chunk failed:', err);
       }

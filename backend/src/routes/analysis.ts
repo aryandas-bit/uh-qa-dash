@@ -352,7 +352,7 @@ router.post('/batch', async (req, res) => {
           analysisCache.set(ticketId, analysis);
           cachedResults.push({ ticketId, analysis, cached: false });
 
-          saveQAScore(ticketId, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
+          await saveQAScore(ticketId, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
             console.error('[Batch] Failed to persist QA score for', ticketId, e)
           );
 
