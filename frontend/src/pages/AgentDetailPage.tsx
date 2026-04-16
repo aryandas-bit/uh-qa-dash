@@ -58,18 +58,23 @@ export default function AgentDetailPage() {
   });
   const reviews: Record<string, { status: string; note: string | null }> = reviewsData?.data?.reviews || {};
 
-  // Fetch cached QA scores for all loaded tickets.
-  // staleTime=0 ensures any user who opens (or refocuses) the page always gets
-  // the latest scores from the DB, even if someone else just ran QC.
   const [qcRunning, setQcRunning] = useState(false);
   const [qcProgress, setQcProgress] = useState<{ done: number; total: number } | null>(null);
+
+  // Fetch cached QA scores for all loaded tickets.
+  // Poll every 8s until all tickets have scores — this way every user (not just
+  // the one who clicked Run QC) sees scores appear as they are computed.
   const { data: scoresData } = useQuery({
     queryKey: ['cached-scores', ticketIds.join(',')],
     queryFn: () => analysisApi.getCachedScores(ticketIds),
     enabled: ticketIds.length > 0,
     staleTime: 0,
-    // Poll every 6 seconds while QC is running so scores appear as they are saved
-    refetchInterval: qcRunning ? 6000 : false,
+    refetchInterval: (query) => {
+      const scores = (query.state.data as any)?.data?.scores || {};
+      const scored = Object.keys(scores).length;
+      // Stop polling once every ticket has a score
+      return scored < ticketIds.length ? 8000 : false;
+    },
   });
   const cachedScores: Record<string, ScoreEntry> = scoresData?.data?.scores || {};
   // True only once the scores query has actually resolved (not just "not loading")
