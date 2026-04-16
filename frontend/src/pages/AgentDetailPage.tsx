@@ -5,12 +5,18 @@ import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { agentsApi, analysisApi } from '../api/client';
 import type { DateMode } from '../api/client';
-import { formatDate, subDays } from '../utils/date';
-
 export default function AgentDetailPage() {
   const { email } = useParams<{ email: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const date = searchParams.get('date') || formatDate(subDays(new Date(), 2), 'yyyy-MM-dd');
+
+  // Fetch available dates to get a valid fallback
+  const { data: datesData } = useQuery({
+    queryKey: ['dates'],
+    queryFn: () => agentsApi.getDates(),
+    staleTime: 1000 * 60 * 60,
+  });
+  const latestDate = datesData?.data?.dates?.[0] || '';
+  const date = searchParams.get('date') || latestDate;
   const dateMode = (searchParams.get('dateMode') as DateMode) || 'activity';
 
   const decodedEmail = decodeURIComponent(email || '');
@@ -20,9 +26,9 @@ export default function AgentDetailPage() {
   const { data: ticketsData, isLoading: ticketsLoading } = useQuery({
     queryKey: ['agent-tickets', decodedEmail, date, dateMode],
     queryFn: () => agentsApi.getTickets(decodedEmail, date, 500, dateMode),
-    enabled: !!decodedEmail,
-    staleTime: 1000 * 60 * 30, // 30 minutes
-    gcTime: 1000 * 60 * 60, // 1 hour
+    enabled: !!decodedEmail && !!date,
+    staleTime: 1000 * 60 * 30,
+    gcTime: 1000 * 60 * 60,
   });
 
   const handleDateChange = (newDate: string) => {
@@ -119,7 +125,7 @@ export default function AgentDetailPage() {
         </div>
         <div className="flex items-center gap-3">
           {/* Date Mode Toggle */}
-          <div className="flex items-center bg-white border border-slate-200 rounded-lg p-1">
+          <div className="flex items-center bg-slate-100 rounded-xl p-1">
             <button
               onClick={() => handleDateModeChange('initialized')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-all ${
@@ -234,7 +240,7 @@ export default function AgentDetailPage() {
                     <Link
                       key={ticket.TICKET_ID}
                       to={`/ticket/${ticket.TICKET_ID}`}
-                      className="block p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-all border border-slate-100 hover:border-uh-purple/30"
+                      className="block p-3 rounded-xl bg-white shadow-elevation-1 hover:shadow-elevation-2 transition-all duration-md3 ease-md3"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
@@ -278,7 +284,7 @@ export default function AgentDetailPage() {
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="text-left text-slate-500 text-sm border-b border-slate-200">
+                  <tr className="text-left text-slate-500 text-sm">
                     <th className="pb-3 pr-4">Ticket ID</th>
                     <th className="pb-3 px-4">Subject</th>
                     <th className="pb-3 px-4">Customer</th>
@@ -292,7 +298,7 @@ export default function AgentDetailPage() {
                   {tickets.slice(0, 50).map((ticket: any) => (
                     <tr
                       key={ticket.TICKET_ID}
-                      className="border-b border-slate-100 hover:bg-slate-50 transition-colors"
+                      className="hover:bg-slate-50 transition-colors rounded-lg"
                     >
                       <td className="py-3 pr-4">
                         <Link

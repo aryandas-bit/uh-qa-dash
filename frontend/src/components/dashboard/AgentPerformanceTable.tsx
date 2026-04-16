@@ -31,8 +31,8 @@ export default function AgentPerformanceTable({
   };
 
   const sortedAgents = [...agents].sort((a, b) => {
-    const aVal = a[sortField] ?? 0;
-    const bVal = b[sortField] ?? 0;
+    const aVal = Number(a[sortField]) || 0;
+    const bVal = Number(b[sortField]) || 0;
     return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
   });
 
@@ -77,7 +77,7 @@ export default function AgentPerformanceTable({
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
-            <tr className="text-left text-slate-500 text-sm border-b border-slate-200">
+            <tr className="text-left text-slate-500 text-sm">
               <th className="pb-4 pr-4">Agent</th>
               <th
                 className="pb-4 px-4 cursor-pointer hover:text-slate-900 transition-colors"
@@ -122,7 +122,7 @@ export default function AgentPerformanceTable({
             {sortedAgents.map((agent) => (
               <tr
                 key={agent.agentEmail}
-                className="border-b border-slate-100 hover:bg-slate-50 transition-colors"
+                className="hover:bg-slate-50 transition-colors rounded-lg"
               >
                 <td className="py-4 pr-4">
                   <div>

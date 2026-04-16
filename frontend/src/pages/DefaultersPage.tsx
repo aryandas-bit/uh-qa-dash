@@ -83,7 +83,7 @@ export default function DefaultersPage() {
           <p className="text-3xl font-bold mt-1">
             {defaulters.length > 0
               ? (
-                  defaulters.reduce((sum: number, d: any) => sum + d.lowCsatPercent, 0) /
+                  defaulters.reduce((sum: number, d: any) => sum + Number(d.lowCsatPercent || 0), 0) /
                   defaulters.length
                 ).toFixed(1)
               : 0}
@@ -153,19 +153,19 @@ export default function DefaultersPage() {
                     <td className="py-4 px-4">
                       <span
                         className={`font-semibold ${
-                          defaulter.lowCsatPercent > 20
+                          Number(defaulter.lowCsatPercent) > 20
                             ? 'text-uh-error'
-                            : defaulter.lowCsatPercent > 10
+                            : Number(defaulter.lowCsatPercent) > 10
                             ? 'text-uh-warning'
                             : 'text-slate-500'
                         }`}
                       >
-                        {defaulter.lowCsatPercent?.toFixed(1)}%
+                        {Number(defaulter.lowCsatPercent || 0).toFixed(1)}%
                       </span>
                     </td>
                     <td className="py-4 px-4">
                       <ScoreBadge
-                        score={defaulter.avgCsat ? defaulter.avgCsat * 20 : null}
+                        score={defaulter.avgCsat ? Number(defaulter.avgCsat) * 20 : null}
                         size="sm"
                       />
                     </td>

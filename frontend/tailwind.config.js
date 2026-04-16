@@ -7,7 +7,6 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Ultrahuman brand colors (accessible on light backgrounds)
         'uh-purple': '#6d4df5',
         'uh-cyan': '#0ea5e9',
         'uh-dark': '#101828',
@@ -17,9 +16,16 @@ export default {
         'uh-warning': '#f59e0b',
         'uh-error': '#ef4444',
       },
-      backgroundImage: {
-        'gradient-primary': 'linear-gradient(135deg, #7c3aed, #00d4ff)',
-        'gradient-dark': 'linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%)',
+      boxShadow: {
+        'elevation-1': '0 1px 3px 1px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.12)',
+        'elevation-2': '0 2px 6px 2px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.12)',
+        'elevation-3': '0 4px 8px 3px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.12)',
+      },
+      transitionTimingFunction: {
+        'md3': 'cubic-bezier(0.2, 0, 0, 1)',
+      },
+      transitionDuration: {
+        'md3': '300ms',
       },
     },
   },

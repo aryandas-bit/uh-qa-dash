@@ -86,7 +86,11 @@ function parseMessages(messagesJson: string): ParsedMessage[] {
         if (typeof msg.m === 'string') {
           // Try to parse as JSON
           try {
-            const parsed = JSON.parse(msg.m);
+            let parsed = JSON.parse(msg.m);
+            // Handle array-wrapped messages (e.g. [{"quickReplies":...}])
+            if (Array.isArray(parsed)) {
+              parsed = parsed[0] || {};
+            }
             if (parsed.message) {
               content = parsed.message;
             } else if (parsed.text) {
@@ -320,7 +324,7 @@ export default function TicketPage() {
         <button
           onClick={() => handleAnalyze(true)}
           disabled={isAnalyzing}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-uh-purple to-uh-cyan hover:opacity-90 disabled:opacity-50 transition-all font-medium"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-uh-purple hover:bg-uh-purple/90 disabled:opacity-50 transition-all font-medium"
         >
           {isAnalyzing ? (
             <>
@@ -343,7 +347,7 @@ export default function TicketPage() {
 
       {/* Analysis Error */}
       {analysisError && (
-        <div className="mb-6 p-4 rounded-xl bg-uh-error/10 border border-uh-error/30 text-uh-error">
+        <div className="mb-6 p-4 rounded-xl bg-uh-error/10 text-uh-error">
           <div className="flex items-center gap-2">
             <AlertTriangle size={18} />
             <span>{analysisError}</span>
@@ -388,7 +392,7 @@ export default function TicketPage() {
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-50 ${
                       review?.status === 'approved'
                         ? 'bg-uh-success text-white hover:bg-uh-success/80'
-                        : 'bg-uh-success/10 text-uh-success hover:bg-uh-success/20 border border-uh-success/30'
+                        : 'bg-uh-success/10 text-uh-success hover:bg-uh-success/20'
                     }`}
                   >
                     {isReviewing && review?.status !== 'approved' ? (
@@ -407,7 +411,7 @@ export default function TicketPage() {
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-50 ${
                       review?.status === 'flagged'
                         ? 'bg-uh-error text-white hover:bg-uh-error/80'
-                        : 'bg-uh-error/10 text-uh-error hover:bg-uh-error/20 border border-uh-error/30'
+                        : 'bg-uh-error/10 text-uh-error hover:bg-uh-error/20'
                     }`}
                   >
                     {isReviewing && review?.status !== 'flagged' ? (
@@ -444,14 +448,14 @@ export default function TicketPage() {
                   value={reviewerName}
                   onChange={e => setReviewerName(e.target.value)}
                   placeholder="Your name *"
-                  className="w-full text-sm border border-slate-200 rounded-lg p-2 mb-2 focus:outline-none focus:ring-2 focus:ring-uh-purple/40 bg-white"
+                  className="w-full text-sm rounded-xl p-2.5 mb-2 focus:outline-none shadow-elevation-1 focus:shadow-elevation-2 bg-white transition-all duration-md3"
                 />
                 <textarea
                   value={noteInput}
                   onChange={e => setNoteInput(e.target.value)}
                   placeholder={pendingStatus === 'flagged' ? 'Why is this analysis inaccurate? (optional)' : 'Add a note (optional)'}
                   rows={3}
-                  className="w-full text-sm border border-slate-200 rounded-lg p-2 resize-none focus:outline-none focus:ring-2 focus:ring-uh-purple/40 bg-white"
+                  className="w-full text-sm rounded-xl p-2.5 resize-none focus:outline-none shadow-elevation-1 focus:shadow-elevation-2 bg-white transition-all duration-md3"
                 />
                 <div className="flex items-center gap-2 mt-2">
                   <button
@@ -477,7 +481,7 @@ export default function TicketPage() {
             {/* Existing note display */}
             {(review?.note || review?.reviewerName) && !pendingStatus && (
               <div className={`mb-4 p-3 rounded-lg flex items-start gap-2 ${
-                review.status === 'approved' ? 'bg-uh-success/10 border border-uh-success/20' : 'bg-uh-error/10 border border-uh-error/20'
+                review.status === 'approved' ? 'bg-uh-success/10' : 'bg-uh-error/10'
               }`}>
                 <MessageSquare size={14} className={`mt-0.5 shrink-0 ${review.status === 'approved' ? 'text-uh-success' : 'text-uh-error'}`} />
                 <div className="flex-1 min-w-0">
@@ -505,7 +509,7 @@ export default function TicketPage() {
 
             {/* Resolution Status */}
             {analysis.resolution && (analysis.resolution.wasAbandoned || analysis.resolution.wasAutoResolved) && (
-              <div className="mb-4 p-4 rounded-lg bg-uh-error/10 border border-uh-error/30">
+              <div className="mb-4 p-4 rounded-lg bg-uh-error/10">
                 <div className="flex items-start gap-3">
                   <XCircle size={20} className="text-uh-error mt-0.5" />
                   <div className="flex-1">
@@ -576,7 +580,7 @@ export default function TicketPage() {
 
             {/* Customer Context */}
             {analysis.customerContext && (
-              <div className="mb-4 p-4 rounded-lg bg-slate-50 border border-slate-200">
+              <div className="mb-4 p-4 rounded-lg bg-slate-50">
                 <h3 className="text-sm font-medium text-slate-700 mb-3 flex items-center gap-2">
                   <History size={16} className="text-uh-purple" />
                   Customer Context
@@ -625,7 +629,7 @@ export default function TicketPage() {
                   </div>
                 </div>
                 {analysis.customerContext.recommendation && (
-                  <div className="mt-3 p-2 rounded bg-uh-warning/10 border border-uh-warning/30">
+                  <div className="mt-3 p-2 rounded bg-uh-warning/10">
                     <p className="text-sm text-uh-warning">
                       <strong>Recommendation:</strong> {analysis.customerContext.recommendation}
                     </p>
@@ -804,7 +808,7 @@ export default function TicketPage() {
               </div>
               <div className="flex justify-between items-center py-2 border-b border-slate-200">
                 <span className="text-slate-500">CSAT</span>
-                <span>{ticket?.TICKET_CSAT && ticket?.TICKET_CSAT !== 'NA' ? ticket.TICKET_CSAT : '-'}</span>
+                <span>{ticket?.TICKET_CSAT && ticket.TICKET_CSAT > 0 ? ticket.TICKET_CSAT : '-'}</span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-slate-200">
                 <span className="text-slate-500">Messages</span>
@@ -821,8 +825,12 @@ export default function TicketPage() {
               <div className="flex justify-between items-center py-2">
                 <span className="text-slate-500">Response Time</span>
                 <span>
-                  {ticket?.FIRST_RESPONSE_DURATION_SECONDS
-                    ? `${ticket.FIRST_RESPONSE_DURATION_SECONDS}s`
+                  {ticket?.FIRST_RESPONSE_DURATION_SECONDS && ticket.FIRST_RESPONSE_DURATION_SECONDS > 0
+                    ? ticket.FIRST_RESPONSE_DURATION_SECONDS < 60
+                      ? `${Math.round(ticket.FIRST_RESPONSE_DURATION_SECONDS)}s`
+                      : ticket.FIRST_RESPONSE_DURATION_SECONDS < 3600
+                        ? `${Math.round(ticket.FIRST_RESPONSE_DURATION_SECONDS / 60)}m`
+                        : `${(ticket.FIRST_RESPONSE_DURATION_SECONDS / 3600).toFixed(1)}h`
                     : '-'}
                 </span>
               </div>

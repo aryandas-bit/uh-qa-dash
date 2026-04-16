@@ -33,18 +33,20 @@ export default function DatePicker({
     if (e.target.value) onDateChange(e.target.value);
   };
 
+  if (!selectedDate) return null;
+
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1.5">
       <button
         onClick={handlePrevDay}
-        className="p-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 transition-all"
+        className="p-2 rounded-xl bg-white shadow-elevation-1 hover:shadow-elevation-2 transition-all duration-md3 ease-md3"
       >
         <ChevronLeft size={20} />
       </button>
 
       <button
         onClick={() => inputRef.current?.showPicker()}
-        className="relative flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg min-w-[180px] justify-center hover:bg-slate-50 hover:border-uh-purple/40 transition-all cursor-pointer"
+        className="relative flex items-center gap-2 px-4 py-2 bg-white shadow-elevation-1 hover:shadow-elevation-2 rounded-xl min-w-[180px] justify-center transition-all duration-md3 ease-md3 cursor-pointer"
       >
         <Calendar size={16} className="text-uh-purple" />
         <span className="font-medium">{formatDate(currentDate, 'MMM dd, yyyy')}</span>
@@ -62,7 +64,7 @@ export default function DatePicker({
       <button
         onClick={handleNextDay}
         disabled={!canGoForward}
-        className="p-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+        className="p-2 rounded-xl bg-white shadow-elevation-1 hover:shadow-elevation-2 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-md3 ease-md3"
       >
         <ChevronRight size={20} />
       </button>
