@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { useState, useMemo, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Users,
   ChevronRight,
@@ -13,13 +13,17 @@ import {
   Star,
   Frown,
   Clock,
-  CheckCircle
+  CheckCircle,
+  Play,
+  Loader2,
+  X,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
 import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { agentsApi, ticketsApi } from '../api/client';
+import { agentsApi, ticketsApi, dailyPicksApi } from '../api/client';
 import type { DateMode } from '../api/client';
-import { formatDate, subDays } from '../utils/date';
 
 export default function DashboardPage() {
   const [selectedDate, setSelectedDate] = useState('');
@@ -27,7 +31,7 @@ export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Fetch available dates to auto-select the latest
-  const { data: datesData } = useQuery({
+  const { data: datesData, isLoading: datesLoading } = useQuery({
     queryKey: ['dates'],
     queryFn: () => agentsApi.getDates(),
     staleTime: 1000 * 60 * 60,
@@ -35,7 +39,7 @@ export default function DashboardPage() {
 
   // Auto-select the latest available date once loaded
   const latestDate = datesData?.data?.dates?.[0];
-  const effectiveDate = selectedDate || latestDate || formatDate(subDays(new Date(), 2), 'yyyy-MM-dd');
+  const effectiveDate = selectedDate || latestDate || '';
 
   // Fetch agent daily data
   const { data: agentsData, isLoading: agentsLoading } = useQuery({
@@ -67,14 +71,16 @@ export default function DashboardPage() {
     if (!searchQuery.trim()) return agents;
     const query = searchQuery.toLowerCase();
     return agents.filter((agent: any) => {
-      const name = formatAgentName(agent.agentEmail).toLowerCase();
-      const email = agent.agentEmail.toLowerCase();
+      const agentEmail = agent?.agentEmail || '';
+      const name = formatAgentName(agentEmail).toLowerCase();
+      const email = agentEmail.toLowerCase();
       return name.includes(query) || email.includes(query);
     });
   }, [agents, searchQuery]);
 
   // Format agent name nicely
-  function formatAgentName(email: string) {
+  function formatAgentName(email?: string) {
+    if (!email) return 'Unknown Agent';
     return email
       .split('@')[0]
       .replace(/_ext$/, '')
@@ -93,7 +99,14 @@ export default function DashboardPage() {
     return `${(num / 3600).toFixed(1)}h`;
   };
 
-  const isLoading = agentsLoading || insightsLoading;
+  const isLoading = datesLoading || agentsLoading || insightsLoading;
+  const hasNoDashboardData =
+    !isLoading &&
+    !searchQuery &&
+    agents.length === 0 &&
+    topIssues.length === 0 &&
+    bestAgents.length === 0 &&
+    frustratedCustomers.length === 0;
 
   return (
     <div className="p-8">
@@ -107,7 +120,7 @@ export default function DashboardPage() {
         </div>
         <div className="flex items-center gap-3">
           {/* Date Mode Toggle */}
-          <div className="flex items-center bg-white border border-slate-200 rounded-lg p-1">
+          <div className="flex items-center bg-slate-100 rounded-xl p-1">
             <button
               onClick={() => setDateMode('initialized')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-all ${
@@ -303,6 +316,9 @@ export default function DashboardPage() {
             </div>
           </div>
 
+          {/* Daily Audit Section */}
+          {effectiveDate && <DailyAuditSection date={effectiveDate} />}
+
           {/* Agent List */}
           <div className="card">
             <div className="flex items-center justify-between mb-4">
@@ -315,25 +331,32 @@ export default function DashboardPage() {
                   placeholder="Search agents..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 pr-4 py-2 rounded-lg bg-white border border-slate-200 text-sm focus:outline-none focus:border-uh-purple/50 w-64 transition-all"
+                  className="pl-9 pr-4 py-2 rounded-xl bg-slate-50 text-sm focus:outline-none focus:bg-white shadow-elevation-1 focus:shadow-elevation-2 w-64 transition-all duration-md3 ease-md3"
                 />
               </div>
             </div>
 
             {filteredAgents.length === 0 ? (
-              <p className="text-slate-400 text-center py-12">
-                {searchQuery ? 'No agents match your search' : 'No agents found for this date'}
-              </p>
+              <div className="text-center py-12 space-y-2">
+                <p className="text-slate-400">
+                  {searchQuery ? 'No agents match your search' : 'No agents found for this date'}
+                </p>
+                {hasNoDashboardData && (
+                  <p className="text-sm text-slate-500 max-w-xl mx-auto">
+                    The app is running, but your local backend does not have ticket data yet. Add your Turso credentials or load local data into `backend/dev.db` to populate the dashboard.
+                  </p>
+                )}
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {filteredAgents.map((agent: any) => (
                   <Link
                     key={agent.agentEmail}
                     to={`/agent/${encodeURIComponent(agent.agentEmail)}?date=${effectiveDate}&dateMode=${dateMode}`}
-                    className="flex items-center justify-between p-4 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 hover:border-uh-purple/30 transition-all group"
+                    className="flex items-center justify-between p-4 rounded-xl bg-white shadow-elevation-1 hover:shadow-elevation-2 transition-all duration-md3 ease-md3 group"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-uh-purple to-uh-cyan flex items-center justify-center text-white font-bold">
+                      <div className="w-10 h-10 rounded-full bg-uh-purple flex items-center justify-center text-white font-bold">
                         {formatAgentName(agent.agentEmail).charAt(0)}
                       </div>
                       <div>
@@ -359,6 +382,222 @@ export default function DashboardPage() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// Daily Audit Section — shows picks and allows triggering batch analysis
+function DailyAuditSection({ date }: { date: string }) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [isPolling, setIsPolling] = useState(false);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+
+  const { data: picksData, isLoading: picksLoading } = useQuery({
+    queryKey: ['daily-picks', date],
+    queryFn: () => dailyPicksApi.getPicks(date),
+    enabled: !!date,
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const { data: statusData } = useQuery({
+    queryKey: ['daily-picks-status', date],
+    queryFn: () => dailyPicksApi.getStatus(date),
+    enabled: !!date && isPolling,
+    refetchInterval: isPolling ? 8000 : false,
+  });
+
+  const runAudit = useMutation({
+    mutationFn: () => dailyPicksApi.runAudit(date),
+    onSuccess: () => {
+      setIsPolling(true);
+      queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date] });
+    },
+  });
+
+  const status = statusData?.data;
+  const picks = picksData?.data;
+  const byAgent = picks?.byAgent || {};
+  const agentEmails = Object.keys(byAgent);
+  const totalPicks = picks?.totalPicks || 0;
+  const analyzed = status?.analyzed || 0;
+  const inProgress = status?.inProgress || false;
+  const progressPct = totalPicks > 0 ? Math.round((analyzed / totalPicks) * 100) : 0;
+
+  // Stop polling when audit completes
+  useEffect(() => {
+    if (isPolling && status && !status.inProgress && status.analyzed > 0) {
+      setIsPolling(false);
+      queryClient.invalidateQueries({ queryKey: ['daily-picks', date] });
+    }
+  }, [status, isPolling, date, queryClient]);
+
+  if (picksLoading) return null;
+
+  return (
+    <div className="card mb-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-lg font-semibold">Daily Audit</h2>
+          <p className="text-slate-500 text-sm">
+            {totalPicks > 0
+              ? `${totalPicks} tickets sampled across ${agentEmails.length} agents`
+              : 'Generate random ticket picks for QA review'}
+          </p>
+        </div>
+        <button
+          onClick={() => runAudit.mutate()}
+          disabled={runAudit.isPending || inProgress}
+          className="btn-primary flex items-center gap-2 text-sm !px-4 !py-2.5"
+        >
+          {runAudit.isPending || inProgress ? (
+            <><Loader2 size={16} className="animate-spin" /> Running...</>
+          ) : (
+            <><Play size={16} /> {totalPicks > 0 ? 'Re-run Audit' : 'Run Daily Audit'}</>
+          )}
+        </button>
+      </div>
+
+      {/* Progress Bar */}
+      {totalPicks > 0 && (
+        <div className="mb-4">
+          <div className="flex justify-between text-sm text-slate-500 mb-1">
+            <span>{analyzed} / {totalPicks} analyzed</span>
+            <span>{progressPct}%</span>
+          </div>
+          <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-uh-purple rounded-full transition-all duration-500 ease-md3"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Per-agent breakdown */}
+      {agentEmails.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+          {agentEmails.slice(0, 12).map(email => {
+            const agent = byAgent[email];
+            const name = email.split('@')[0].replace(/[._]/g, ' ').replace(/_ext$/, '');
+            return (
+              <button
+                key={email}
+                onClick={() => setSelectedAgent(email)}
+                className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 hover:bg-slate-100 hover:shadow-elevation-1 transition-all duration-md3 ease-md3 text-left"
+              >
+                <div className="w-7 h-7 rounded-full bg-uh-purple/10 text-uh-purple flex items-center justify-center text-xs font-bold">
+                  {name.charAt(0).toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate">{name}</p>
+                  <p className="text-[10px] text-slate-400">
+                    {agent.analyzed}/{agent.total} done
+                  </p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Modal for selected agent's tickets */}
+      {selectedAgent && (
+        <AnalyzedTicketsModal
+          email={selectedAgent}
+          date={date}
+          picks={picks?.picks || []}
+          onClose={() => setSelectedAgent(null)}
+          onTicketClick={(ticketId) => {
+            navigate(`/ticket/${ticketId}`);
+            setSelectedAgent(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Modal showing analyzed tickets for a specific agent
+function AnalyzedTicketsModal({
+  email,
+  date,
+  picks,
+  onClose,
+  onTicketClick,
+}: {
+  email: string;
+  date: string;
+  picks: any[];
+  onClose: () => void;
+  onTicketClick: (ticketId: string) => void;
+}) {
+  const agentPicks = picks.filter(p => p.agentEmail === email);
+  const name = email.split('@')[0].replace(/[._]/g, ' ').replace(/_ext$/, '');
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-elevation-3 max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-slate-200">
+          <div>
+            <h2 className="text-xl font-semibold">{name}'s Analyzed Tickets</h2>
+            <p className="text-sm text-slate-500 mt-1">{date} • {agentPicks.length} tickets</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="overflow-auto flex-1">
+          {agentPicks.length === 0 ? (
+            <div className="p-6 text-center text-slate-500">No tickets found</div>
+          ) : (
+            <div className="divide-y divide-slate-200">
+              {agentPicks.map((pick) => (
+                <button
+                  key={pick.ticketId}
+                  onClick={() => onTicketClick(pick.ticketId)}
+                  className="w-full px-6 py-4 hover:bg-slate-50 transition-colors text-left flex items-center justify-between group"
+                >
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-sm">Ticket {pick.ticketId}</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                        #{pick.pickOrder}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {pick.analyzed ? (
+                        <>
+                          {pick.analysisStatus === 'success' ? (
+                            <CheckCircle2 size={14} className="text-uh-success" />
+                          ) : (
+                            <AlertCircle size={14} className="text-uh-error" />
+                          )}
+                          <span className="text-xs text-slate-500">
+                            {pick.analysisStatus === 'success' ? 'Analyzed' : 'Analysis failed'}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-400">Pending</span>
+                      )}
+                    </div>
+                  </div>
+                  <ChevronRight size={18} className="text-slate-400 group-hover:text-uh-purple transition-colors" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

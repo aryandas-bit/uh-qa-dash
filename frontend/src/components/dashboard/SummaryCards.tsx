@@ -15,25 +15,25 @@ interface CardProps {
 }
 
 function Card({ title, value, subtitle, icon, color }: CardProps) {
-  const colorClasses = {
-    purple: 'from-uh-purple/20 to-uh-purple/5 border-uh-purple/30',
-    cyan: 'from-uh-cyan/20 to-uh-cyan/5 border-uh-cyan/30',
-    green: 'from-uh-success/20 to-uh-success/5 border-uh-success/30',
-    red: 'from-uh-error/20 to-uh-error/5 border-uh-error/30',
-    yellow: 'from-uh-warning/20 to-uh-warning/5 border-uh-warning/30',
+  const bgColors = {
+    purple: 'bg-uh-purple/8',
+    cyan: 'bg-uh-cyan/8',
+    green: 'bg-uh-success/8',
+    red: 'bg-uh-error/8',
+    yellow: 'bg-uh-warning/8',
   };
 
   const iconColors = {
-    purple: 'text-uh-purple',
-    cyan: 'text-uh-cyan',
-    green: 'text-uh-success',
-    red: 'text-uh-error',
-    yellow: 'text-uh-warning',
+    purple: 'text-uh-purple bg-uh-purple/10',
+    cyan: 'text-uh-cyan bg-uh-cyan/10',
+    green: 'text-uh-success bg-uh-success/10',
+    red: 'text-uh-error bg-uh-error/10',
+    yellow: 'text-uh-warning bg-uh-warning/10',
   };
 
   return (
     <div
-      className={`bg-gradient-to-br ${colorClasses[color]} border rounded-2xl p-6 transition-all hover:scale-[1.02]`}
+      className={`${bgColors[color]} rounded-2xl p-6 shadow-elevation-1 hover:shadow-elevation-2 transition-shadow duration-md3 ease-md3`}
     >
       <div className="flex items-start justify-between">
         <div>
@@ -43,7 +43,7 @@ function Card({ title, value, subtitle, icon, color }: CardProps) {
             <p className="text-slate-400 text-sm mt-1">{subtitle}</p>
           )}
         </div>
-        <div className={`p-3 rounded-xl bg-slate-50 ${iconColors[color]}`}>
+        <div className={`p-3 rounded-xl ${iconColors[color]}`}>
           {icon}
         </div>
       </div>
@@ -58,7 +58,7 @@ export default function SummaryCards({ summary, isLoading }: SummaryCardsProps) 
         {[...Array(4)].map((_, i) => (
           <div
             key={i}
-            className="bg-slate-50 border border-slate-200 rounded-2xl p-6 animate-pulse h-32"
+            className="bg-white/60 rounded-2xl p-6 animate-pulse h-32 shadow-elevation-1"
           />
         ))}
       </div>
@@ -76,7 +76,7 @@ export default function SummaryCards({ summary, isLoading }: SummaryCardsProps) 
       />
       <Card
         title="Average CSAT"
-        value={summary?.avgCsat?.toFixed(1) ?? 'N/A'}
+        value={summary?.avgCsat ? Number(summary.avgCsat).toFixed(1) : 'N/A'}
         subtitle="out of 5.0"
         icon={<Star size={24} />}
         color="cyan"

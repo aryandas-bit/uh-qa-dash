@@ -69,3 +69,9 @@ export const customersApi = {
   getHistory: (email: string, limit = 50) =>
     api.get(`/customers/${encodeURIComponent(email)}/history?limit=${limit}`),
 };
+
+export const dailyPicksApi = {
+  getPicks: (date: string) => api.get(`/daily-picks?date=${date}`),
+  runAudit: (date: string) => api.post('/daily-picks/run-audit', { date }, { timeout: 300000 }),
+  getStatus: (date: string) => api.get(`/daily-picks/status?date=${date}`),
+};

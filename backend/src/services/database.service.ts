@@ -2,17 +2,48 @@ import dotenv from 'dotenv';
 dotenv.config();
 import { createClient } from '@libsql/client';
 
-// Main read-only database (yellow_bot_analysis)
+const mainDbUrl = process.env.TURSO_DB_URL || 'file:./dev.db';
+
+// Main database (defaults to a local dev DB when TURSO_DB_URL is not set)
 const mainDb = createClient({
-  url: process.env.TURSO_DB_URL!,
+  url: mainDbUrl,
   authToken: process.env.TURSO_DB_TOKEN,
 });
 
 // Reviews database (writable)
 const reviewsDb = createClient({
-  url: process.env.TURSO_REVIEWS_URL || process.env.TURSO_DB_URL!,
+  url: process.env.TURSO_REVIEWS_URL || mainDbUrl,
   authToken: process.env.TURSO_REVIEWS_TOKEN || process.env.TURSO_DB_TOKEN,
 });
+
+const initMainPromise = mainDbUrl.startsWith('file:')
+  ? mainDb.execute(`
+      CREATE TABLE IF NOT EXISTS raw_tickets (
+        TICKET_ID TEXT,
+        VISITOR_NAME TEXT,
+        VISITOR_EMAIL TEXT,
+        SUBJECT TEXT,
+        TAGS TEXT,
+        TICKET_STATUS TEXT,
+        PRIORITY TEXT,
+        AGENT_EMAIL TEXT,
+        RESOLVED_BY TEXT,
+        FIRST_RESPONSE_DURATION_SECONDS INTEGER,
+        AVG_RESPONSE_TIME_SECONDS INTEGER,
+        SPENT_TIME_SECONDS INTEGER,
+        TICKET_CSAT INTEGER,
+        AGENT_RATING INTEGER,
+        MESSAGES_JSON TEXT,
+        MESSAGE_COUNT INTEGER,
+        USER_MESSAGE_COUNT INTEGER,
+        AGENT_MESSAGE_COUNT INTEGER,
+        DAY TEXT,
+        GROUP_NAME TEXT,
+        INITIALIZED_TIME TEXT,
+        RESOLVED_TIME TEXT
+      )
+    `)
+  : Promise.resolve();
 
 // Initialize reviews table once, share this promise across all callers
 const initPromise = reviewsDb.execute(`
@@ -27,13 +58,199 @@ const initPromise = reviewsDb.execute(`
   reviewsDb.execute(`ALTER TABLE qa_reviews ADD COLUMN reviewer_name TEXT`).catch(() => {
     /* column already exists */
   })
+).then(() =>
+  reviewsDb.execute(`
+    CREATE TABLE IF NOT EXISTS audit_memories (
+      memory_key TEXT PRIMARY KEY,
+      customer_email TEXT NOT NULL,
+      issue_signature TEXT NOT NULL,
+      category TEXT,
+      subject TEXT,
+      tags TEXT,
+      last_ticket_id TEXT NOT NULL,
+      last_ticket_date TEXT,
+      last_agent_email TEXT,
+      total_seen INTEGER NOT NULL DEFAULT 1,
+      repeat_issue INTEGER NOT NULL DEFAULT 0,
+      customer_experience TEXT,
+      customer_context TEXT,
+      resolution_state TEXT,
+      resolution_notes TEXT,
+      deduction_summary TEXT,
+      missed_steps TEXT,
+      suggestions TEXT,
+      qa_score INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `)
+).then(() =>
+  reviewsDb.execute(`
+    CREATE TABLE IF NOT EXISTS daily_picks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pick_date TEXT NOT NULL,
+      agent_email TEXT NOT NULL,
+      ticket_id TEXT NOT NULL,
+      pick_order INTEGER NOT NULL,
+      analyzed INTEGER NOT NULL DEFAULT 0,
+      analysis_status TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(pick_date, agent_email, ticket_id)
+    )
+  `)
+).then(() =>
+  reviewsDb.execute(`CREATE INDEX IF NOT EXISTS idx_daily_picks_date ON daily_picks(pick_date)`).catch(() => {})
+).then(() =>
+  reviewsDb.execute(`
+    CREATE TABLE IF NOT EXISTS ticket_analyses (
+      ticket_id TEXT PRIMARY KEY,
+      analysis_json TEXT NOT NULL,
+      analyzed_at TEXT NOT NULL,
+      source TEXT
+    )
+  `)
 );
+
+export interface DailyPick {
+  pickDate: string;
+  agentEmail: string;
+  ticketId: string;
+  pickOrder: number;
+  analyzed: boolean;
+  analysisStatus: string | null;
+}
+
+export async function getDailyPicksFromDb(date: string): Promise<DailyPick[]> {
+  await initPromise;
+  const result = await reviewsDb.execute({
+    sql: `SELECT pick_date as pickDate, agent_email as agentEmail, ticket_id as ticketId,
+                 pick_order as pickOrder, analyzed, analysis_status as analysisStatus
+          FROM daily_picks WHERE pick_date = ? ORDER BY agent_email, pick_order`,
+    args: [date],
+  });
+  return (result.rows as unknown as any[]).map(r => ({
+    ...r,
+    analyzed: Boolean(r.analyzed),
+  }));
+}
+
+export async function saveDailyPicks(picks: Array<{ pickDate: string; agentEmail: string; ticketId: string; pickOrder: number }>): Promise<void> {
+  await initPromise;
+  const now = new Date().toISOString();
+  for (const pick of picks) {
+    await reviewsDb.execute({
+      sql: `INSERT OR IGNORE INTO daily_picks (pick_date, agent_email, ticket_id, pick_order, analyzed, created_at)
+            VALUES (?, ?, ?, ?, 0, ?)`,
+      args: [pick.pickDate, pick.agentEmail, pick.ticketId, pick.pickOrder, now],
+    });
+  }
+}
+
+export async function markPickAnalyzed(date: string, ticketId: string, status: string): Promise<void> {
+  await initPromise;
+  await reviewsDb.execute({
+    sql: `UPDATE daily_picks SET analyzed = 1, analysis_status = ? WHERE pick_date = ? AND ticket_id = ?`,
+    args: [status, date, ticketId],
+  });
+}
+
+export async function saveTicketAnalysis(
+  ticketId: string,
+  analysis: object,
+  source: 'daily_audit' | 'manual' = 'manual'
+): Promise<void> {
+  await initPromise;
+  await reviewsDb.execute({
+    sql: `INSERT OR REPLACE INTO ticket_analyses (ticket_id, analysis_json, analyzed_at, source)
+          VALUES (?, ?, datetime('now'), ?)`,
+    args: [ticketId, JSON.stringify(analysis), source],
+  });
+}
+
+export async function getStoredTicketAnalysis(ticketId: string): Promise<object | null> {
+  await initPromise;
+  const result = await reviewsDb.execute({
+    sql: `SELECT analysis_json FROM ticket_analyses WHERE ticket_id = ?`,
+    args: [ticketId],
+  });
+  const row = result.rows[0] as unknown as { analysis_json: string } | undefined;
+  if (!row) return null;
+  try {
+    return JSON.parse(row.analysis_json);
+  } catch {
+    return null;
+  }
+}
+
+export async function getActiveAgentEmails(date: string, dateMode: DateMode = 'activity'): Promise<string[]> {
+  await initMainPromise;
+  const dateCondition = dateMode === 'initialized' ? 'DATE(INITIALIZED_TIME) = ?' : 'DAY = ?';
+  const result = await mainDb.execute({
+    sql: `SELECT DISTINCT AGENT_EMAIL FROM raw_tickets WHERE ${dateCondition} AND AGENT_EMAIL IS NOT NULL AND AGENT_EMAIL != '' LIMIT 200`,
+    args: [date],
+  });
+  return (result.rows as unknown as any[]).map(r => String(r.AGENT_EMAIL));
+}
+
+export async function getAgentTicketIds(agentEmail: string, date: string, dateMode: DateMode = 'activity'): Promise<string[]> {
+  await initMainPromise;
+  const dateCondition = dateMode === 'initialized' ? 'DATE(INITIALIZED_TIME) = ?' : 'DAY = ?';
+  const result = await mainDb.execute({
+    sql: `SELECT DISTINCT TICKET_ID FROM raw_tickets WHERE AGENT_EMAIL = ? AND ${dateCondition}`,
+    args: [agentEmail, date],
+  });
+  return (result.rows as unknown as any[]).map(r => String(r.TICKET_ID));
+}
 
 export interface QAReview {
   status: 'approved' | 'flagged';
   note: string | null;
   reviewerName: string | null;
   reviewedAt: string;
+}
+
+export interface AuditMemoryRecord {
+  memoryKey: string;
+  customerEmail: string;
+  issueSignature: string;
+  category: string | null;
+  subject: string | null;
+  tags: string | null;
+  lastTicketId: string;
+  lastTicketDate: string | null;
+  lastAgentEmail: string | null;
+  totalSeen: number;
+  repeatIssue: boolean;
+  customerExperience: string | null;
+  customerContext: string | null;
+  resolutionState: string | null;
+  resolutionNotes: string | null;
+  deductionSummary: string | null;
+  missedSteps: string | null;
+  suggestions: string | null;
+  qaScore: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveAuditMemoryInput {
+  customerEmail: string;
+  issueSignature: string;
+  category?: string;
+  subject?: string;
+  tags?: string;
+  ticketId: string;
+  ticketDate?: string;
+  agentEmail?: string;
+  repeatIssue?: boolean;
+  customerExperience?: string | null;
+  customerContext?: string | null;
+  resolutionState?: string | null;
+  resolutionNotes?: string | null;
+  deductionSummary?: string | null;
+  missedSteps?: string | null;
+  suggestions?: string | null;
+  qaScore?: number | null;
 }
 
 export async function saveQAReview(ticketId: string, status: 'approved' | 'flagged', note?: string, reviewerName?: string): Promise<void> {
@@ -91,6 +308,136 @@ export async function getAllQAReviews(): Promise<Array<QAReview & { ticketId: st
   return result.rows as unknown as Array<QAReview & { ticketId: string }>;
 }
 
+export async function saveAuditMemory(input: SaveAuditMemoryInput): Promise<void> {
+  await initPromise;
+
+  const memoryKey = `${input.customerEmail.toLowerCase()}::${input.issueSignature}`;
+  const existingResult = await reviewsDb.execute({
+    sql: `SELECT total_seen as totalSeen, last_ticket_id as lastTicketId, created_at as createdAt
+          FROM audit_memories
+          WHERE memory_key = ?`,
+    args: [memoryKey],
+  });
+
+  const existing = existingResult.rows[0] as unknown as {
+    totalSeen?: number;
+    lastTicketId?: string;
+    createdAt?: string;
+  } | undefined;
+
+  const totalSeen = existing?.lastTicketId === input.ticketId
+    ? Number(existing?.totalSeen || 1)
+    : Number(existing?.totalSeen || 0) + 1;
+  const createdAt = existing?.createdAt || new Date().toISOString();
+  const updatedAt = new Date().toISOString();
+
+  await reviewsDb.execute({
+    sql: `INSERT OR REPLACE INTO audit_memories (
+            memory_key,
+            customer_email,
+            issue_signature,
+            category,
+            subject,
+            tags,
+            last_ticket_id,
+            last_ticket_date,
+            last_agent_email,
+            total_seen,
+            repeat_issue,
+            customer_experience,
+            customer_context,
+            resolution_state,
+            resolution_notes,
+            deduction_summary,
+            missed_steps,
+            suggestions,
+            qa_score,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      memoryKey,
+      input.customerEmail.toLowerCase(),
+      input.issueSignature,
+      input.category || null,
+      input.subject || null,
+      input.tags || null,
+      input.ticketId,
+      input.ticketDate || null,
+      input.agentEmail || null,
+      totalSeen,
+      input.repeatIssue ? 1 : 0,
+      input.customerExperience || null,
+      input.customerContext || null,
+      input.resolutionState || null,
+      input.resolutionNotes || null,
+      input.deductionSummary || null,
+      input.missedSteps || null,
+      input.suggestions || null,
+      input.qaScore ?? null,
+      createdAt,
+      updatedAt,
+    ],
+  });
+}
+
+export async function getRelevantAuditMemories(
+  customerEmail: string,
+  issueSignature?: string,
+  limit = 3
+): Promise<AuditMemoryRecord[]> {
+  await initPromise;
+
+  const normalizedEmail = customerEmail.toLowerCase();
+  const exactSignature = issueSignature || '';
+  const prefixSignature = exactSignature.includes('|')
+    ? `${exactSignature.split('|')[0]}%`
+    : '';
+
+  const result = await reviewsDb.execute({
+    sql: `SELECT
+            memory_key as memoryKey,
+            customer_email as customerEmail,
+            issue_signature as issueSignature,
+            category,
+            subject,
+            tags,
+            last_ticket_id as lastTicketId,
+            last_ticket_date as lastTicketDate,
+            last_agent_email as lastAgentEmail,
+            total_seen as totalSeen,
+            repeat_issue as repeatIssue,
+            customer_experience as customerExperience,
+            customer_context as customerContext,
+            resolution_state as resolutionState,
+            resolution_notes as resolutionNotes,
+            deduction_summary as deductionSummary,
+            missed_steps as missedSteps,
+            suggestions,
+            qa_score as qaScore,
+            created_at as createdAt,
+            updated_at as updatedAt
+          FROM audit_memories
+          WHERE customer_email = ?
+          ORDER BY
+            CASE
+              WHEN issue_signature = ? THEN 0
+              WHEN ? != '' AND issue_signature LIKE ? THEN 1
+              ELSE 2
+            END,
+            updated_at DESC
+          LIMIT ?`,
+    args: [normalizedEmail, exactSignature, prefixSignature, prefixSignature, limit],
+  });
+
+  return (result.rows as unknown as AuditMemoryRecord[]).map((row) => ({
+    ...row,
+    totalSeen: Number(row.totalSeen || 0),
+    repeatIssue: Boolean(row.repeatIssue),
+    qaScore: row.qaScore === null || row.qaScore === undefined ? null : Number(row.qaScore),
+  }));
+}
+
 export interface ReviewWithTicket extends QAReview {
   ticketId: string;
   reviewerName: string | null;
@@ -103,6 +450,7 @@ export interface ReviewWithTicket extends QAReview {
 }
 
 export async function getAllQAReviewsWithTickets(): Promise<ReviewWithTicket[]> {
+  await initMainPromise;
   const reviews = await getAllQAReviews();
   if (reviews.length === 0) return [];
 
@@ -165,6 +513,27 @@ export interface TicketRow {
   RESOLVED_TIME: string;
 }
 
+// Normalize TEXT columns from SQLite to proper JS numbers
+function toNum(val: any): number {
+  if (val === null || val === undefined || val === '' || val === 'NA') return 0;
+  const n = Number(val);
+  return isNaN(n) ? 0 : n;
+}
+
+function normalizeTicketRow(row: any): TicketRow {
+  return {
+    ...row,
+    FIRST_RESPONSE_DURATION_SECONDS: toNum(row.FIRST_RESPONSE_DURATION_SECONDS),
+    AVG_RESPONSE_TIME_SECONDS: toNum(row.AVG_RESPONSE_TIME_SECONDS),
+    SPENT_TIME_SECONDS: toNum(row.SPENT_TIME_SECONDS),
+    TICKET_CSAT: toNum(row.TICKET_CSAT),
+    AGENT_RATING: toNum(row.AGENT_RATING),
+    MESSAGE_COUNT: toNum(row.MESSAGE_COUNT),
+    USER_MESSAGE_COUNT: toNum(row.USER_MESSAGE_COUNT),
+    AGENT_MESSAGE_COUNT: toNum(row.AGENT_MESSAGE_COUNT),
+  };
+}
+
 export interface AgentSummary {
   agentEmail: string;
   totalTickets: number;
@@ -179,6 +548,7 @@ export type DateMode = 'activity' | 'initialized';
 
 // Get unique dates available in database
 export async function getAvailableDates(): Promise<string[]> {
+  await initMainPromise;
   const result = await mainDb.execute(`
     SELECT DISTINCT DAY
     FROM raw_tickets
@@ -192,6 +562,7 @@ export async function getAvailableDates(): Promise<string[]> {
 // Get agent summary for a specific date (using DISTINCT to avoid duplicates)
 // dateMode: 'activity' = filter by DAY field, 'initialized' = filter by INITIALIZED_TIME date
 export async function getAgentsDailySummary(date: string, dateMode: DateMode = 'activity'): Promise<AgentSummary[]> {
+  await initMainPromise;
   const dateCondition = dateMode === 'initialized'
     ? 'DATE(INITIALIZED_TIME) = ?'
     : 'DAY = ?';
@@ -200,11 +571,11 @@ export async function getAgentsDailySummary(date: string, dateMode: DateMode = '
     sql: `SELECT
             AGENT_EMAIL as agentEmail,
             COUNT(DISTINCT TICKET_ID) as totalTickets,
-            ROUND(AVG(CASE WHEN TICKET_CSAT > 0 THEN TICKET_CSAT ELSE NULL END), 2) as avgCsat,
-            ROUND(AVG(CASE WHEN FIRST_RESPONSE_DURATION_SECONDS > 0 AND FIRST_RESPONSE_DURATION_SECONDS < 86400
-                           THEN FIRST_RESPONSE_DURATION_SECONDS ELSE NULL END), 0) as avgResponseTime,
+            ROUND(AVG(CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 THEN CAST(TICKET_CSAT AS REAL) ELSE NULL END), 2) as avgCsat,
+            ROUND(AVG(CASE WHEN CAST(FIRST_RESPONSE_DURATION_SECONDS AS REAL) > 0 AND CAST(FIRST_RESPONSE_DURATION_SECONDS AS REAL) < 86400
+                           THEN CAST(FIRST_RESPONSE_DURATION_SECONDS AS REAL) ELSE NULL END), 0) as avgResponseTime,
             COUNT(DISTINCT CASE WHEN TICKET_STATUS = 'Resolved' THEN TICKET_ID END) as resolvedCount,
-            COUNT(DISTINCT CASE WHEN TICKET_CSAT > 0 AND TICKET_CSAT < 3 THEN TICKET_ID END) as lowCsatCount
+            COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 AND CAST(TICKET_CSAT AS REAL) < 3 THEN TICKET_ID END) as lowCsatCount
           FROM raw_tickets
           WHERE ${dateCondition} AND AGENT_EMAIL IS NOT NULL AND AGENT_EMAIL != ''
           GROUP BY AGENT_EMAIL
@@ -214,10 +585,14 @@ export async function getAgentsDailySummary(date: string, dateMode: DateMode = '
   return result.rows as unknown as AgentSummary[];
 }
 
+// Export normalizeTicketRow for use in routes
+export { normalizeTicketRow };
+
 // Get tickets for a specific agent on a specific date (deduplicated by TICKET_ID)
 // dateMode: 'activity' = filter by DAY field (when ticket had activity/resolved)
 // dateMode: 'initialized' = filter by INITIALIZED_TIME date (when ticket was created)
 export async function getAgentTickets(agentEmail: string, date: string, limit = 100, offset = 0, dateMode: DateMode = 'activity'): Promise<TicketRow[]> {
+  await initMainPromise;
   const dateCondition = dateMode === 'initialized'
     ? 'DATE(INITIALIZED_TIME) = ?'
     : 'DAY = ?';
@@ -253,19 +628,20 @@ export async function getAgentTickets(agentEmail: string, date: string, limit = 
           LIMIT ? OFFSET ?`,
     args: [agentEmail, date, limit, offset],
   });
-  return result.rows as unknown as TicketRow[];
+  return (result.rows as unknown as any[]).map(normalizeTicketRow);
 }
 
 // Get agent performance over a date range
 export async function getAgentPerformance(agentEmail: string, startDate: string, endDate: string) {
+  await initMainPromise;
   const result = await mainDb.execute({
     sql: `SELECT
             DAY as date,
             COUNT(DISTINCT TICKET_ID) as totalTickets,
-            ROUND(AVG(CASE WHEN TICKET_CSAT > 0 THEN TICKET_CSAT ELSE NULL END), 2) as avgCsat,
-            ROUND(AVG(CASE WHEN FIRST_RESPONSE_DURATION_SECONDS > 0 AND FIRST_RESPONSE_DURATION_SECONDS < 86400
-                           THEN FIRST_RESPONSE_DURATION_SECONDS ELSE NULL END), 0) as avgResponseTime,
-            COUNT(DISTINCT CASE WHEN TICKET_CSAT > 0 AND TICKET_CSAT < 3 THEN TICKET_ID END) as lowCsatCount
+            ROUND(AVG(CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 THEN CAST(TICKET_CSAT AS REAL) ELSE NULL END), 2) as avgCsat,
+            ROUND(AVG(CASE WHEN CAST(FIRST_RESPONSE_DURATION_SECONDS AS REAL) > 0 AND CAST(FIRST_RESPONSE_DURATION_SECONDS AS REAL) < 86400
+                           THEN CAST(FIRST_RESPONSE_DURATION_SECONDS AS REAL) ELSE NULL END), 0) as avgResponseTime,
+            COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 AND CAST(TICKET_CSAT AS REAL) < 3 THEN TICKET_ID END) as lowCsatCount
           FROM raw_tickets
           WHERE AGENT_EMAIL = ? AND DAY BETWEEN ? AND ?
           GROUP BY DAY
@@ -277,6 +653,7 @@ export async function getAgentPerformance(agentEmail: string, startDate: string,
 
 // Get single ticket by ID (returns first match if duplicates exist)
 export async function getTicketById(ticketId: string): Promise<TicketRow | undefined> {
+  await initMainPromise;
   const result = await mainDb.execute({
     sql: `SELECT
             TICKET_ID,
@@ -306,11 +683,13 @@ export async function getTicketById(ticketId: string): Promise<TicketRow | undef
           GROUP BY TICKET_ID`,
     args: [ticketId],
   });
-  return result.rows[0] as unknown as TicketRow | undefined;
+  const row = result.rows[0] as unknown as any | undefined;
+  return row ? normalizeTicketRow(row) : undefined;
 }
 
 // Get customer ticket history (deduplicated)
 export async function getCustomerHistory(email: string, limit = 50): Promise<TicketRow[]> {
+  await initMainPromise;
   const result = await mainDb.execute({
     sql: `SELECT
             TICKET_ID,
@@ -338,19 +717,20 @@ export async function getCustomerHistory(email: string, limit = 50): Promise<Tic
           LIMIT ?`,
     args: [email, limit],
   });
-  return result.rows as unknown as TicketRow[];
+  return (result.rows as unknown as any[]).map(normalizeTicketRow);
 }
 
 // Get agents with frequent low CSAT (defaulters)
 export async function getDefaulters(minIssues = 5, days = 30) {
+  await initMainPromise;
   const result = await mainDb.execute({
     sql: `SELECT
             AGENT_EMAIL as agentEmail,
             COUNT(DISTINCT TICKET_ID) as totalTickets,
-            COUNT(DISTINCT CASE WHEN TICKET_CSAT > 0 AND TICKET_CSAT < 3 THEN TICKET_ID END) as lowCsatCount,
-            ROUND(AVG(CASE WHEN TICKET_CSAT > 0 THEN TICKET_CSAT ELSE NULL END), 2) as avgCsat,
-            ROUND(100.0 * COUNT(DISTINCT CASE WHEN TICKET_CSAT > 0 AND TICKET_CSAT < 3 THEN TICKET_ID END) /
-                  NULLIF(COUNT(DISTINCT CASE WHEN TICKET_CSAT > 0 THEN TICKET_ID END), 0), 1) as lowCsatPercent
+            COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 AND CAST(TICKET_CSAT AS REAL) < 3 THEN TICKET_ID END) as lowCsatCount,
+            ROUND(AVG(CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 THEN CAST(TICKET_CSAT AS REAL) ELSE NULL END), 2) as avgCsat,
+            ROUND(100.0 * COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 AND CAST(TICKET_CSAT AS REAL) < 3 THEN TICKET_ID END) /
+                  NULLIF(COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 THEN TICKET_ID END), 0), 1) as lowCsatPercent
           FROM raw_tickets
           WHERE AGENT_EMAIL IS NOT NULL
             AND AGENT_EMAIL != ''
@@ -365,6 +745,7 @@ export async function getDefaulters(minIssues = 5, days = 30) {
 
 // Get flagged tickets (low CSAT or slow response) - deduplicated
 export async function getFlaggedTickets(date: string, limit = 50) {
+  await initMainPromise;
   const result = await mainDb.execute({
     sql: `SELECT
             TICKET_ID,
@@ -385,8 +766,8 @@ export async function getFlaggedTickets(date: string, limit = 50) {
           FROM raw_tickets
           WHERE DAY = ?
             AND (
-              (TICKET_CSAT > 0 AND TICKET_CSAT < 3)
-              OR FIRST_RESPONSE_DURATION_SECONDS > 3600
+              (CAST(TICKET_CSAT AS REAL) > 0 AND CAST(TICKET_CSAT AS REAL) < 3)
+              OR CAST(FIRST_RESPONSE_DURATION_SECONDS AS REAL) > 3600
             )
           GROUP BY TICKET_ID
           ORDER BY MAX(TICKET_CSAT) ASC, MAX(FIRST_RESPONSE_DURATION_SECONDS) DESC
@@ -398,15 +779,16 @@ export async function getFlaggedTickets(date: string, limit = 50) {
 
 // Get daily summary stats (using DISTINCT for accurate counts)
 export async function getDailySummary(date: string) {
+  await initMainPromise;
   const result = await mainDb.execute({
     sql: `SELECT
             COUNT(DISTINCT TICKET_ID) as totalTickets,
             COUNT(DISTINCT AGENT_EMAIL) as activeAgents,
-            ROUND(AVG(CASE WHEN TICKET_CSAT > 0 THEN TICKET_CSAT ELSE NULL END), 2) as avgCsat,
-            ROUND(AVG(CASE WHEN FIRST_RESPONSE_DURATION_SECONDS > 0 AND FIRST_RESPONSE_DURATION_SECONDS < 86400
-                           THEN FIRST_RESPONSE_DURATION_SECONDS ELSE NULL END), 0) as avgResponseTime,
+            ROUND(AVG(CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 THEN CAST(TICKET_CSAT AS REAL) ELSE NULL END), 2) as avgCsat,
+            ROUND(AVG(CASE WHEN CAST(FIRST_RESPONSE_DURATION_SECONDS AS REAL) > 0 AND CAST(FIRST_RESPONSE_DURATION_SECONDS AS REAL) < 86400
+                           THEN CAST(FIRST_RESPONSE_DURATION_SECONDS AS REAL) ELSE NULL END), 0) as avgResponseTime,
             COUNT(DISTINCT CASE WHEN TICKET_STATUS = 'Resolved' THEN TICKET_ID END) as resolvedCount,
-            COUNT(DISTINCT CASE WHEN TICKET_CSAT > 0 AND TICKET_CSAT < 3 THEN TICKET_ID END) as lowCsatCount
+            COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 AND CAST(TICKET_CSAT AS REAL) < 3 THEN TICKET_ID END) as lowCsatCount
           FROM raw_tickets
           WHERE DAY = ?`,
     args: [date],
@@ -416,6 +798,7 @@ export async function getDailySummary(date: string) {
 
 // Get top issues by category/tag for a date
 export async function getTopIssues(date: string, limit = 10, dateMode: DateMode = 'activity') {
+  await initMainPromise;
   const dateCondition = dateMode === 'initialized'
     ? 'DATE(INITIALIZED_TIME) = ?'
     : 'DAY = ?';
@@ -436,6 +819,7 @@ export async function getTopIssues(date: string, limit = 10, dateMode: DateMode 
 
 // Get best performing agents by CSAT for a date
 export async function getBestAgents(date: string, limit = 5, dateMode: DateMode = 'activity') {
+  await initMainPromise;
   const dateCondition = dateMode === 'initialized'
     ? 'DATE(INITIALIZED_TIME) = ?'
     : 'DAY = ?';
@@ -444,15 +828,15 @@ export async function getBestAgents(date: string, limit = 5, dateMode: DateMode 
     sql: `SELECT
             AGENT_EMAIL as agentEmail,
             COUNT(DISTINCT TICKET_ID) as totalTickets,
-            ROUND(AVG(CASE WHEN TICKET_CSAT > 0 THEN TICKET_CSAT ELSE NULL END), 2) as avgCsat,
-            COUNT(DISTINCT CASE WHEN TICKET_CSAT >= 4 THEN TICKET_ID END) as highCsatCount,
-            COUNT(DISTINCT CASE WHEN TICKET_CSAT > 0 AND TICKET_CSAT < 3 THEN TICKET_ID END) as lowCsatCount
+            ROUND(AVG(CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 THEN CAST(TICKET_CSAT AS REAL) ELSE NULL END), 2) as avgCsat,
+            COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) >= 4 THEN TICKET_ID END) as highCsatCount,
+            COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 AND CAST(TICKET_CSAT AS REAL) < 3 THEN TICKET_ID END) as lowCsatCount
           FROM raw_tickets
           WHERE ${dateCondition}
             AND AGENT_EMAIL IS NOT NULL
             AND AGENT_EMAIL != ''
           GROUP BY AGENT_EMAIL
-          HAVING COUNT(DISTINCT CASE WHEN TICKET_CSAT > 0 THEN TICKET_ID END) >= 3
+          HAVING COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 THEN TICKET_ID END) >= 3
           ORDER BY avgCsat DESC, highCsatCount DESC
           LIMIT ?`,
     args: [date, limit],
@@ -462,6 +846,7 @@ export async function getBestAgents(date: string, limit = 5, dateMode: DateMode 
 
 // Get most frustrated customers (low CSAT) for a date
 export async function getFrustratedCustomers(date: string, limit = 5, dateMode: DateMode = 'activity') {
+  await initMainPromise;
   const dateCondition = dateMode === 'initialized'
     ? 'DATE(INITIALIZED_TIME) = ?'
     : 'DAY = ?';
@@ -471,15 +856,15 @@ export async function getFrustratedCustomers(date: string, limit = 5, dateMode: 
             VISITOR_EMAIL as customerEmail,
             MAX(VISITOR_NAME) as customerName,
             COUNT(DISTINCT TICKET_ID) as ticketCount,
-            MIN(TICKET_CSAT) as lowestCsat,
-            ROUND(AVG(CASE WHEN TICKET_CSAT > 0 THEN TICKET_CSAT ELSE NULL END), 2) as avgCsat,
+            MIN(CAST(TICKET_CSAT AS REAL)) as lowestCsat,
+            ROUND(AVG(CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 THEN CAST(TICKET_CSAT AS REAL) ELSE NULL END), 2) as avgCsat,
             GROUP_CONCAT(SUBJECT, ' | ') as subjects
           FROM raw_tickets
           WHERE ${dateCondition}
             AND VISITOR_EMAIL IS NOT NULL
             AND VISITOR_EMAIL != ''
-            AND TICKET_CSAT > 0
-            AND TICKET_CSAT < 3
+            AND CAST(TICKET_CSAT AS REAL) > 0
+            AND CAST(TICKET_CSAT AS REAL) < 3
           GROUP BY VISITOR_EMAIL
           ORDER BY lowestCsat ASC, ticketCount DESC
           LIMIT ?`,
@@ -490,6 +875,7 @@ export async function getFrustratedCustomers(date: string, limit = 5, dateMode: 
 
 // Get comprehensive daily insights
 export async function getDailyInsights(date: string, dateMode: DateMode = 'activity') {
+  await initMainPromise;
   const dateCondition = dateMode === 'initialized'
     ? 'DATE(INITIALIZED_TIME) = ?'
     : 'DAY = ?';
@@ -499,12 +885,12 @@ export async function getDailyInsights(date: string, dateMode: DateMode = 'activ
             COUNT(DISTINCT TICKET_ID) as totalTickets,
             COUNT(DISTINCT AGENT_EMAIL) as activeAgents,
             COUNT(DISTINCT VISITOR_EMAIL) as uniqueCustomers,
-            ROUND(AVG(CASE WHEN TICKET_CSAT > 0 THEN TICKET_CSAT ELSE NULL END), 2) as avgCsat,
-            ROUND(AVG(CASE WHEN FIRST_RESPONSE_DURATION_SECONDS > 0 AND FIRST_RESPONSE_DURATION_SECONDS < 86400
-                           THEN FIRST_RESPONSE_DURATION_SECONDS ELSE NULL END), 0) as avgResponseTime,
+            ROUND(AVG(CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 THEN CAST(TICKET_CSAT AS REAL) ELSE NULL END), 2) as avgCsat,
+            ROUND(AVG(CASE WHEN CAST(FIRST_RESPONSE_DURATION_SECONDS AS REAL) > 0 AND CAST(FIRST_RESPONSE_DURATION_SECONDS AS REAL) < 86400
+                           THEN CAST(FIRST_RESPONSE_DURATION_SECONDS AS REAL) ELSE NULL END), 0) as avgResponseTime,
             COUNT(DISTINCT CASE WHEN TICKET_STATUS = 'Resolved' THEN TICKET_ID END) as resolvedCount,
-            COUNT(DISTINCT CASE WHEN TICKET_CSAT > 0 AND TICKET_CSAT < 3 THEN TICKET_ID END) as lowCsatCount,
-            COUNT(DISTINCT CASE WHEN TICKET_CSAT >= 4 THEN TICKET_ID END) as highCsatCount
+            COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 AND CAST(TICKET_CSAT AS REAL) < 3 THEN TICKET_ID END) as lowCsatCount,
+            COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) >= 4 THEN TICKET_ID END) as highCsatCount
           FROM raw_tickets
           WHERE ${dateCondition}`,
     args: [date],

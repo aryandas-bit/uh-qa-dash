@@ -103,32 +103,7 @@ cd backend && npm install
 cd ../frontend && npm install
 ```
 
-### 2. Configure backend environment
-
-Create `backend/.env`:
-
-```env
-PORT=3001
-DATABASE_PATH=../../yellow_bot_analysis.db
-REVIEWS_DB_PATH=../qa_reviews.db
-SOPS_PATH=../../all_sops.json
-OPENAI_API_KEY=your_openai_key
-ANTHROPIC_API_KEY=your_anthropic_key
-GEMINI_API_KEY=your_gemini_key
-GOOGLE_SHEET_ID=your_google_sheet_id
-GOOGLE_CREDENTIALS_PATH=./service-account.json
-METABASE_URL=https://metabase.ultrahuman.com
-METABASE_API_KEY=your_metabase_api_key
-```
-
-Notes:
-
-- `OPENAI_API_KEY` is required for the OpenAI-backed analysis service.
-- `ANTHROPIC_API_KEY` and `GEMINI_API_KEY` are only needed if you use those providers in your local flow.
-- `GOOGLE_CREDENTIALS_PATH` should point to a local service-account JSON file. Do not commit it.
-- The repo now ignores `backend/*.json` to avoid pushing local credentials accidentally.
-
-### 3. Start the backend
+### 2. Start the backend
 
 ```bash
 cd backend
@@ -137,7 +112,13 @@ npm run dev
 
 The API runs at `http://localhost:3001`.
 
-### 4. Start the frontend
+Backend configuration notes:
+
+- If `TURSO_DB_URL` is set, the API uses that LibSQL/Turso database.
+- If `TURSO_DB_URL` is **not** set, the API falls back to a local dev database at `backend/dev.db` (it will be empty unless you load data into it).
+- `OPENAI_API_KEY` is only required for AI analysis endpoints (ticket scoring); the rest of the API can run without it.
+
+### 3. Start the frontend
 
 ```bash
 cd frontend

@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { analyzeTicket, batchAnalyze, CustomerTicketHistory } from '../services/gemini.service.js';
-import { getTicketById, getFlaggedTickets, getAgentTickets, getCustomerHistory, TicketRow, saveQAReview, getQAReview, deleteQAReview, getQAReviewsBulk, getAllQAReviews, getAllQAReviewsWithTickets } from '../services/database.service.js';
+import { getTicketById, getFlaggedTickets, getAgentTickets, getCustomerHistory, getRelevantAuditMemories, saveAuditMemory, AuditMemoryRecord, TicketRow, saveQAReview, getQAReview, deleteQAReview, getQAReviewsBulk, getAllQAReviews, getAllQAReviewsWithTickets, saveTicketAnalysis, getStoredTicketAnalysis } from '../services/database.service.js';
 import { upsertReviewToSheet, deleteReviewFromSheet } from '../services/sheets.service.js';
 import { getAllSOPs, getSOPCategories } from '../services/sop.service.js';
 import NodeCache from 'node-cache';
+
+const BATCH_ANALYSIS_CONCURRENCY = Math.max(1, Number(process.env.GEMINI_BATCH_MAX_CONCURRENT || '1'));
 
 // Helper to format customer history for analysis - only PREVIOUS tickets (before current)
 function formatCustomerHistoryForAnalysis(
@@ -34,8 +36,67 @@ function formatCustomerHistoryForAnalysis(
       agentEmail: t.AGENT_EMAIL || '',
       status: t.TICKET_STATUS || 'Unknown',
       priority: t.PRIORITY || 'Normal',
-      csat: typeof t.TICKET_CSAT === 'number' ? t.TICKET_CSAT : undefined
+      csat: t.TICKET_CSAT && t.TICKET_CSAT > 0 ? t.TICKET_CSAT : undefined
     }));
+}
+
+function buildIssueSignature(ticket: Pick<TicketRow, 'GROUP_NAME' | 'SUBJECT' | 'TAGS'>): string {
+  const category = normalizeSignaturePart(ticket.GROUP_NAME || 'unknown');
+  const subject = normalizeSignaturePart(ticket.SUBJECT || 'unknown subject')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 6)
+    .join(' ');
+  const tagPart = extractTagTokens(ticket.TAGS).slice(0, 4).join(' ');
+
+  return [category, subject, tagPart].filter(Boolean).join(' | ');
+}
+
+function extractTagTokens(tags?: string): string[] {
+  if (!tags) return [];
+
+  try {
+    const parsed = JSON.parse(tags);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((tag) => normalizeSignaturePart(String(tag)))
+        .filter(Boolean);
+    }
+  } catch {
+    return normalizeSignaturePart(tags).split(' ').filter(Boolean);
+  }
+
+  return [];
+}
+
+function normalizeSignaturePart(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildDeductionSummary(analysis: any): string | null {
+  if (!Array.isArray(analysis?.deductions) || analysis.deductions.length === 0) {
+    return null;
+  }
+
+  return analysis.deductions
+    .slice(0, 4)
+    .map((deduction: any) => `${deduction.category}: ${deduction.reason}`)
+    .join(' | ');
+}
+
+function buildResolutionState(analysis: any): string {
+  if (analysis?.resolution?.wasAbandoned) return 'abandoned';
+  if (analysis?.resolution?.customerIssueResolved) return 'resolved';
+  if (analysis?.resolution?.wasAutoResolved) return 'auto_resolved';
+  return 'unresolved';
+}
+
+function buildResolutionNotes(analysis: any): string | null {
+  return analysis?.resolution?.abandonmentDetails || analysis?.summary || null;
 }
 
 const router = Router();
@@ -59,39 +120,80 @@ router.get('/ticket/:id', async (req, res) => {
     const { id } = req.params;
     const forceRefresh = req.query.refresh === 'true';
 
-    // Check cache first
+    // 1. Check in-memory cache (fastest)
     if (!forceRefresh) {
       const cached = analysisCache.get(id);
       if (cached) {
         const review = await getQAReview(id);
         return res.json({ ticketId: id, analysis: cached, cached: true, review: review || null });
       }
+
+      // 2. Check DB (persisted across restarts)
+      const stored = await getStoredTicketAnalysis(id);
+      if (stored) {
+        analysisCache.set(id, stored); // warm up memory cache
+        const review = await getQAReview(id);
+        return res.json({ ticketId: id, analysis: stored, cached: true, review: review || null });
+      }
     }
 
-    // Get ticket data
+    // 3. Get ticket data for fresh analysis
     const ticket = await getTicketById(id);
     if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
+    // Guard: skip tickets with no messages — Gemini can't analyze empty transcripts
+    const messagesRaw = ticket.MESSAGES_JSON;
+    if (!messagesRaw || messagesRaw === 'null' || messagesRaw.trim() === '[]' || messagesRaw.trim() === '') {
+      return res.status(422).json({ error: 'Ticket has no messages to analyze' });
+    }
+
     // Get customer history for context (only tickets BEFORE current one)
     let customerHistory: CustomerTicketHistory[] = [];
+    const issueSignature = buildIssueSignature(ticket);
+    let auditMemories: AuditMemoryRecord[] = [];
     if (ticket.VISITOR_EMAIL) {
       const historyTickets = await getCustomerHistory(ticket.VISITOR_EMAIL, 20);
       customerHistory = formatCustomerHistoryForAnalysis(historyTickets, id, ticket.INITIALIZED_TIME);
+      auditMemories = await getRelevantAuditMemories(ticket.VISITOR_EMAIL, issueSignature, 3);
       console.log(`[Analysis] Customer ${ticket.VISITOR_EMAIL} has ${customerHistory.length} previous tickets`);
     }
 
     // Run analysis with customer history context
     const analysis = await analyzeTicket(
       id,
-      ticket.MESSAGES_JSON,
+      messagesRaw,
       ticket.GROUP_NAME,
       ticket.TAGS,
-      customerHistory
+      customerHistory,
+      auditMemories
     );
 
-    // Cache the result
+    if (ticket.VISITOR_EMAIL) {
+      await saveAuditMemory({
+        customerEmail: ticket.VISITOR_EMAIL,
+        issueSignature,
+        category: ticket.GROUP_NAME,
+        subject: ticket.SUBJECT,
+        tags: ticket.TAGS,
+        ticketId: String(ticket.TICKET_ID),
+        ticketDate: ticket.DAY,
+        agentEmail: ticket.AGENT_EMAIL,
+        repeatIssue: Boolean(analysis.customerContext?.isRepeatIssue),
+        customerExperience: analysis.customerContext?.customerExperience || null,
+        customerContext: analysis.customerContext?.repeatIssueDetails || analysis.customerContext?.recommendation || null,
+        resolutionState: buildResolutionState(analysis),
+        resolutionNotes: buildResolutionNotes(analysis),
+        deductionSummary: buildDeductionSummary(analysis),
+        missedSteps: analysis.sopCompliance?.missedSteps?.join(' | ') || null,
+        suggestions: analysis.suggestions?.slice(0, 3).join(' | ') || null,
+        qaScore: analysis.qaScore ?? null,
+      });
+    }
+
+    // Persist to DB and warm memory cache
+    await saveTicketAnalysis(id, analysis, 'manual');
     analysisCache.set(id, analysis);
 
     const review = await getQAReview(id);
@@ -101,7 +203,7 @@ router.get('/ticket/:id', async (req, res) => {
       analysis,
       cached: false,
       review: review || null,
-      customerHistory: customerHistory.slice(0, 10), // Return recent history to frontend
+      customerHistory: customerHistory.slice(0, 10),
       ticket: {
         subject: ticket.SUBJECT,
         agentEmail: ticket.AGENT_EMAIL,
@@ -200,16 +302,37 @@ router.post('/batch', async (req, res) => {
 
     // Analyze uncached tickets
     if (uncached.length > 0) {
-      const toAnalyze = uncached.map(t => ({
-        ticketId: t.TICKET_ID,
-        messagesJson: t.MESSAGES_JSON,
-        category: t.GROUP_NAME,
-        tags: t.TAGS
+      const toAnalyze = await Promise.all(uncached.map(async (ticket) => {
+        let customerHistory: CustomerTicketHistory[] = [];
+        let auditMemories: AuditMemoryRecord[] = [];
+        const issueSignature = buildIssueSignature(ticket);
+
+        if (ticket.VISITOR_EMAIL) {
+          const historyTickets = await getCustomerHistory(ticket.VISITOR_EMAIL, 12);
+          customerHistory = formatCustomerHistoryForAnalysis(
+            historyTickets,
+            String(ticket.TICKET_ID),
+            ticket.INITIALIZED_TIME
+          );
+          auditMemories = await getRelevantAuditMemories(ticket.VISITOR_EMAIL, issueSignature, 2);
+        }
+
+        return {
+          ticket,
+          issueSignature,
+          ticketId: ticket.TICKET_ID,
+          messagesJson: ticket.MESSAGES_JSON,
+          category: ticket.GROUP_NAME,
+          tags: ticket.TAGS,
+          customerHistory,
+          auditMemories
+        };
       }));
 
-      const results = await batchAnalyze(toAnalyze, 3);
+      const results = await batchAnalyze(toAnalyze, BATCH_ANALYSIS_CONCURRENCY);
+      const ticketLookup = new Map(toAnalyze.map((entry) => [String(entry.ticketId), entry]));
 
-      results.forEach((analysis, ticketId) => {
+      for (const [ticketId, analysis] of results.entries()) {
         if (!(analysis instanceof Error)) {
           analysisCache.set(ticketId, analysis);
           cachedResults.push({
@@ -217,6 +340,29 @@ router.post('/batch', async (req, res) => {
             analysis,
             cached: false
           });
+
+          const source = ticketLookup.get(String(ticketId));
+          if (source?.ticket?.VISITOR_EMAIL) {
+            await saveAuditMemory({
+              customerEmail: source.ticket.VISITOR_EMAIL,
+              issueSignature: source.issueSignature,
+              category: source.ticket.GROUP_NAME,
+              subject: source.ticket.SUBJECT,
+              tags: source.ticket.TAGS,
+              ticketId: String(source.ticket.TICKET_ID),
+              ticketDate: source.ticket.DAY,
+              agentEmail: source.ticket.AGENT_EMAIL,
+              repeatIssue: Boolean(analysis.customerContext?.isRepeatIssue),
+              customerExperience: analysis.customerContext?.customerExperience || null,
+              customerContext: analysis.customerContext?.repeatIssueDetails || analysis.customerContext?.recommendation || null,
+              resolutionState: buildResolutionState(analysis),
+              resolutionNotes: buildResolutionNotes(analysis),
+              deductionSummary: buildDeductionSummary(analysis),
+              missedSteps: analysis.sopCompliance?.missedSteps?.join(' | ') || null,
+              suggestions: analysis.suggestions?.slice(0, 3).join(' | ') || null,
+              qaScore: analysis.qaScore ?? null,
+            });
+          }
         } else {
           cachedResults.push({
             ticketId,
@@ -224,7 +370,7 @@ router.post('/batch', async (req, res) => {
             cached: false
           });
         }
-      });
+      }
     }
 
     // Calculate summary stats
