@@ -1,16 +1,22 @@
 import {
-  getActiveAgentEmails,
-  getAgentTicketIds,
+  getDailyPickCandidates,
   getDailyPicksFromDb,
   saveDailyPicks,
   markPickAnalyzed,
+  syncDailyPickAnalysisFlags,
   getTicketById,
   getCustomerHistory,
   saveTicketAnalysis,
+  getStoredTicketAnalysis,
+  getStoredTicketAnalysisIds,
+  getRelevantAuditMemories,
+  saveAuditMemory,
   type DailyPick,
   type DateMode,
+  type TicketRow,
+  type AuditMemoryRecord,
 } from './database.service.js';
-import { analyzeTicket, batchAnalyze, type CustomerTicketHistory } from './gemini.service.js';
+import { analyzeTicket, type CustomerTicketHistory } from './gemini.service.js';
 
 const DEFAULT_PICKS_PER_AGENT = 20;
 
@@ -44,42 +50,52 @@ export async function getDailyPicks(
   dateMode: DateMode = 'activity'
 ): Promise<{ picks: DailyPick[]; generated: boolean }> {
   // Check cache first
-  const existing = await getDailyPicksFromDb(date);
+  await syncExistingAnalyses(date, dateMode);
+  const existing = await getDailyPicksFromDb(date, dateMode);
   if (existing.length > 0) {
     return { picks: existing, generated: false };
   }
 
-  // Generate new picks — use lightweight agent email query
-  const agentEmails = await getActiveAgentEmails(date, dateMode);
-  if (agentEmails.length === 0) {
+  const candidates = await getDailyPickCandidates(date, dateMode);
+  if (candidates.length === 0) {
     return { picks: [], generated: true };
   }
 
   const rng = mulberry32(dateToSeed(date));
-  const allPicks: Array<{ pickDate: string; agentEmail: string; ticketId: string; pickOrder: number }> = [];
+  const allPicks: Array<{ pickDate: string; dateMode: DateMode; agentEmail: string; ticketId: string; pickOrder: number; analyzed?: boolean; analysisStatus?: string | null }> = [];
+  const byAgent = new Map<string, string[]>();
 
-  for (const agentEmail of agentEmails) {
-    const ticketIds = await getAgentTicketIds(agentEmail, date, dateMode);
-    if (ticketIds.length === 0) continue;
+  candidates.forEach((candidate) => {
+    const existingCandidates = byAgent.get(candidate.agentEmail) || [];
+    existingCandidates.push(candidate.ticketId);
+    byAgent.set(candidate.agentEmail, existingCandidates);
+  });
 
+  const storedAnalysisByTicket = await getStoredTicketAnalysisIds(candidates.map((candidate) => candidate.ticketId));
+
+  byAgent.forEach((ticketIds, agentEmail) => {
     const shuffled = seededShuffle(ticketIds, rng);
     const picked = shuffled.slice(0, Math.min(picksPerAgent, shuffled.length));
 
     picked.forEach((ticketId, idx) => {
+      const hasStoredAnalysis = storedAnalysisByTicket.has(ticketId);
       allPicks.push({
         pickDate: date,
+        dateMode,
         agentEmail,
         ticketId,
         pickOrder: idx + 1,
+        analyzed: hasStoredAnalysis,
+        analysisStatus: hasStoredAnalysis ? 'success' : null,
       });
     });
-  }
+  });
 
   if (allPicks.length > 0) {
     await saveDailyPicks(allPicks);
   }
 
-  const picks = await getDailyPicksFromDb(date);
+  const picks = await getDailyPicksFromDb(date, dateMode);
   return { picks, generated: true };
 }
 
@@ -95,8 +111,9 @@ export interface AuditProgress {
 // Track active audits to prevent duplicate runs
 const activeAudits = new Set<string>();
 
-export async function getAuditStatus(date: string): Promise<AuditProgress> {
-  const picks = await getDailyPicksFromDb(date);
+export async function getAuditStatus(date: string, dateMode: DateMode = 'activity'): Promise<AuditProgress> {
+  await syncExistingAnalyses(date, dateMode);
+  const picks = await getDailyPicksFromDb(date, dateMode);
   const analyzed = picks.filter(p => p.analyzed).length;
   const errors = picks.filter(p => p.analysisStatus === 'error').length;
 
@@ -106,39 +123,50 @@ export async function getAuditStatus(date: string): Promise<AuditProgress> {
     analyzed,
     pending: picks.length - analyzed,
     errors,
-    inProgress: activeAudits.has(date),
+    inProgress: activeAudits.has(getAuditKey(date, dateMode)),
   };
 }
 
-export async function runDailyAudit(date: string): Promise<AuditProgress> {
-  if (activeAudits.has(date)) {
-    return getAuditStatus(date);
+export async function runDailyAudit(date: string, dateMode: DateMode = 'activity'): Promise<AuditProgress> {
+  const auditKey = getAuditKey(date, dateMode);
+  if (activeAudits.has(auditKey)) {
+    return getAuditStatus(date, dateMode);
   }
 
   // Ensure picks exist
-  const { picks } = await getDailyPicks(date);
+  const { picks } = await getDailyPicks(date, DEFAULT_PICKS_PER_AGENT, dateMode);
   const unanalyzed = picks.filter(p => !p.analyzed);
 
   if (unanalyzed.length === 0) {
-    return getAuditStatus(date);
+    return getAuditStatus(date, dateMode);
   }
 
-  activeAudits.add(date);
+  activeAudits.add(auditKey);
+
+  // Safety timeout: auto-remove audit key after 30 minutes in case batch hangs
+  const timeout = setTimeout(() => {
+    if (activeAudits.has(auditKey)) {
+      console.warn(`[DailyAudit] Timeout — force-removing stale audit key: ${auditKey}`);
+      activeAudits.delete(auditKey);
+    }
+  }, 30 * 60 * 1000);
 
   // Run analysis in background — don't await
-  processAuditBatch(date, unanalyzed).finally(() => {
-    activeAudits.delete(date);
+  processAuditBatch(date, dateMode, unanalyzed).finally(() => {
+    clearTimeout(timeout);
+    activeAudits.delete(auditKey);
   });
 
-  return getAuditStatus(date);
+  return getAuditStatus(date, dateMode);
 }
 
-const AUDIT_CONCURRENCY = 5;
-const AUDIT_CHUNK_DELAY_MS = 1000; // 1s between chunks of 5
+const AUDIT_CONCURRENCY = Math.max(1, Number(process.env.DAILY_AUDIT_CONCURRENCY || '2'));
+const AUDIT_CHUNK_DELAY_MS = Math.max(250, Number(process.env.DAILY_AUDIT_CHUNK_DELAY_MS || '500'));
 
-async function processAuditBatch(date: string, picks: DailyPick[]): Promise<void> {
+async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyPick[]): Promise<void> {
   // Promise-based cache: all concurrent calls for the same email await the same fetch
   const historyCache = new Map<string, Promise<any[]>>();
+  const memoryCache = new Map<string, Promise<AuditMemoryRecord[]>>();
 
   function formatHistory(tickets: any[], currentTicketId: string, currentTime?: string): CustomerTicketHistory[] {
     return tickets
@@ -156,15 +184,32 @@ async function processAuditBatch(date: string, picks: DailyPick[]): Promise<void
         agentEmail: t.AGENT_EMAIL || '',
         status: t.TICKET_STATUS || 'Unknown',
         priority: t.PRIORITY || 'Normal',
-        csat: t.TICKET_CSAT > 0 ? t.TICKET_CSAT : undefined,
+        csat: normalizeCsatValue(t.TICKET_CSAT),
       }));
+  }
+
+  function buildIssueSignature(ticket: Pick<TicketRow, 'GROUP_NAME' | 'SUBJECT' | 'TAGS'>): string {
+    const category = normalizeSignaturePart(ticket.GROUP_NAME || 'unknown');
+    const subject = normalizeSignaturePart(ticket.SUBJECT || 'unknown subject')
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 6)
+      .join(' ');
+    const tagPart = extractTagTokens(ticket.TAGS).slice(0, 4).join(' ');
+    return [category, subject, tagPart].filter(Boolean).join(' | ');
   }
 
   async function analyzeOne(pick: DailyPick): Promise<void> {
     try {
+      const stored = await getStoredTicketAnalysis(pick.ticketId);
+      if (stored) {
+        await markPickAnalyzed(date, dateMode, pick.ticketId, 'success');
+        return;
+      }
+
       const ticket = await getTicketById(pick.ticketId);
       if (!ticket) {
-        await markPickAnalyzed(date, pick.ticketId, 'error');
+        await markPickAnalyzed(date, dateMode, pick.ticketId, 'error');
         return;
       }
 
@@ -172,18 +217,36 @@ async function processAuditBatch(date: string, picks: DailyPick[]): Promise<void
       const messagesRaw = ticket.MESSAGES_JSON;
       if (!messagesRaw || messagesRaw === 'null' || messagesRaw.trim() === '[]' || messagesRaw.trim() === '') {
         console.warn(`[DailyAudit] Skipping ticket ${pick.ticketId} — empty MESSAGES_JSON`);
-        await markPickAnalyzed(date, pick.ticketId, 'error');
+        await markPickAnalyzed(date, dateMode, pick.ticketId, 'error');
         return;
       }
 
       let customerHistory: CustomerTicketHistory[] = [];
+      let auditMemories: AuditMemoryRecord[] = [];
+      const issueSignature = buildIssueSignature(ticket);
       if (ticket.VISITOR_EMAIL) {
-        // Store a Promise — concurrent calls for same email share the same fetch
+        // Cache with error recovery — a failed fetch returns [] instead of poisoning the cache
         if (!historyCache.has(ticket.VISITOR_EMAIL)) {
-          historyCache.set(ticket.VISITOR_EMAIL, getCustomerHistory(ticket.VISITOR_EMAIL, 12));
+          historyCache.set(ticket.VISITOR_EMAIL,
+            getCustomerHistory(ticket.VISITOR_EMAIL, 12).catch(err => {
+              console.warn(`[DailyAudit] History fetch failed for ${ticket.VISITOR_EMAIL}:`, err.message);
+              return [];
+            })
+          );
         }
         const rawHistory = await historyCache.get(ticket.VISITOR_EMAIL)!;
         customerHistory = formatHistory(rawHistory, pick.ticketId, ticket.INITIALIZED_TIME);
+
+        const memoryKey = `${ticket.VISITOR_EMAIL.toLowerCase()}::${issueSignature}`;
+        if (!memoryCache.has(memoryKey)) {
+          memoryCache.set(memoryKey,
+            getRelevantAuditMemories(ticket.VISITOR_EMAIL, issueSignature, 2).catch(err => {
+              console.warn(`[DailyAudit] Memory fetch failed for ${memoryKey}:`, err.message);
+              return [];
+            })
+          );
+        }
+        auditMemories = await memoryCache.get(memoryKey)!;
       }
 
       const analysis = await analyzeTicket(
@@ -191,15 +254,37 @@ async function processAuditBatch(date: string, picks: DailyPick[]): Promise<void
         messagesRaw,
         ticket.GROUP_NAME,
         ticket.TAGS,
-        customerHistory
+        customerHistory,
+        auditMemories
       );
 
       // Persist to DB so TicketPage can retrieve without re-analyzing
       await saveTicketAnalysis(pick.ticketId, analysis, 'daily_audit');
-      await markPickAnalyzed(date, pick.ticketId, 'success');
+      if (ticket.VISITOR_EMAIL) {
+        await saveAuditMemory({
+          customerEmail: ticket.VISITOR_EMAIL,
+          issueSignature,
+          category: ticket.GROUP_NAME,
+          subject: ticket.SUBJECT,
+          tags: ticket.TAGS,
+          ticketId: String(ticket.TICKET_ID),
+          ticketDate: ticket.DAY,
+          agentEmail: ticket.AGENT_EMAIL,
+          repeatIssue: Boolean(analysis.customerContext?.isRepeatIssue),
+          customerExperience: analysis.customerContext?.customerExperience || null,
+          customerContext: analysis.customerContext?.repeatIssueDetails || analysis.customerContext?.recommendation || null,
+          resolutionState: buildResolutionState(analysis),
+          resolutionNotes: buildResolutionNotes(analysis),
+          deductionSummary: buildDeductionSummary(analysis),
+          missedSteps: analysis.sopCompliance?.missedSteps?.join(' | ') || null,
+          suggestions: analysis.suggestions?.slice(0, 3).join(' | ') || null,
+          qaScore: analysis.qaScore ?? null,
+        });
+      }
+      await markPickAnalyzed(date, dateMode, pick.ticketId, 'success');
     } catch (error) {
       console.error(`[DailyAudit] Failed ticket ${pick.ticketId}:`, (error as Error).message);
-      await markPickAnalyzed(date, pick.ticketId, 'error');
+      await markPickAnalyzed(date, dateMode, pick.ticketId, 'error');
     }
   }
 
@@ -211,4 +296,65 @@ async function processAuditBatch(date: string, picks: DailyPick[]): Promise<void
       await new Promise(r => setTimeout(r, AUDIT_CHUNK_DELAY_MS));
     }
   }
+}
+
+async function syncExistingAnalyses(date: string, dateMode: DateMode): Promise<void> {
+  await syncDailyPickAnalysisFlags(date, dateMode);
+}
+
+function getAuditKey(date: string, dateMode: DateMode): string {
+  return `${date}:${dateMode}`;
+}
+
+function normalizeSignaturePart(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractTagTokens(tags?: string): string[] {
+  if (!tags) return [];
+
+  try {
+    const parsed = JSON.parse(tags);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((tag) => normalizeSignaturePart(String(tag)))
+        .filter(Boolean);
+    }
+  } catch {
+    return normalizeSignaturePart(tags).split(' ').filter(Boolean);
+  }
+
+  return [];
+}
+
+function buildDeductionSummary(analysis: any): string | null {
+  if (!Array.isArray(analysis?.deductions) || analysis.deductions.length === 0) {
+    return null;
+  }
+
+  return analysis.deductions
+    .slice(0, 4)
+    .map((deduction: any) => `${deduction.category}: ${deduction.reason}`)
+    .join(' | ');
+}
+
+function buildResolutionState(analysis: any): string {
+  if (analysis?.resolution?.wasAbandoned) return 'abandoned';
+  if (analysis?.resolution?.customerIssueResolved) return 'resolved';
+  if (analysis?.resolution?.wasAutoResolved) return 'auto_resolved';
+  return 'unresolved';
+}
+
+function buildResolutionNotes(analysis: any): string | null {
+  return analysis?.resolution?.abandonmentDetails || analysis?.summary || null;
+}
+
+function normalizeCsatValue(value: unknown): number | undefined {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
+  return numeric;
 }

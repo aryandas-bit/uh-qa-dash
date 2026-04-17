@@ -7,6 +7,8 @@ import { fileURLToPath } from 'url';
 const defaultSopsPath = path.join(fileURLToPath(import.meta.url), '../../data/sops.json');
 const sopsPath = process.env.SOPS_PATH || defaultSopsPath;
 
+let didWarnMissingSops = false;
+
 export interface SOP {
   title: string;
   caseIdentifier: string;
@@ -43,7 +45,10 @@ export function loadSOPs(): SOP[] {
     console.log(`Loaded ${sopsCache.length} SOPs from ${sopsPath}`);
     return sopsCache;
   } catch (error) {
-    console.error('Failed to load SOPs:', error);
+    if (!didWarnMissingSops) {
+      console.warn(`SOP file not loaded from ${sopsPath}. Continuing without SOP matching.`);
+      didWarnMissingSops = true;
+    }
     return [];
   }
 }

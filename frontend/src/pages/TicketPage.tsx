@@ -145,7 +145,10 @@ export default function TicketPage() {
   const [isReviewing, setIsReviewing] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<'approved' | 'flagged' | null>(null);
   const [noteInput, setNoteInput] = useState('');
-  const [reviewerName, setReviewerName] = useState(() => localStorage.getItem('qa_reviewer_name') || '');
+  const [reviewerName, setReviewerName] = useState(() => {
+    try { return localStorage.getItem('qa_reviewer_name') || ''; }
+    catch { return ''; }
+  });
 
   // Fetch ticket details
   const { data: ticketData, isLoading } = useQuery({
@@ -209,7 +212,7 @@ export default function TicketPage() {
     if (!id || !pendingStatus) return;
     setIsReviewing(true);
     // Persist reviewer name for future reviews
-    if (reviewerName.trim()) localStorage.setItem('qa_reviewer_name', reviewerName.trim());
+    try { if (reviewerName.trim()) localStorage.setItem('qa_reviewer_name', reviewerName.trim()); } catch { /* quota/private mode */ }
     try {
       const response = await analysisApi.reviewTicket(
         id, pendingStatus,
@@ -545,7 +548,7 @@ export default function TicketPage() {
                 <h3 className="text-sm font-medium text-slate-500 mb-2">Deductions</h3>
                 <div className="space-y-2">
                   {analysis.deductions.map((d, idx) => (
-                    <div key={idx} className="flex items-start gap-3 p-3 rounded-lg bg-slate-50">
+                    <div key={`${d.category}-${idx}`} className="flex items-start gap-3 p-3 rounded-lg bg-slate-50">
                       <span className={`px-2 py-1 rounded text-xs font-medium ${getCategoryColor(d.category)}`}>
                         {getCategoryLabel(d.category)}
                       </span>
@@ -679,8 +682,8 @@ export default function TicketPage() {
                   Missed SOP Steps
                 </h3>
                 <ul className="space-y-1">
-                  {analysis.sopCompliance.missedSteps.map((step, idx) => (
-                    <li key={idx} className="text-sm text-uh-error/80 flex items-center gap-2">
+                  {analysis.sopCompliance.missedSteps.map((step) => (
+                    <li key={step} className="text-sm text-uh-error/80 flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-uh-error" />
                       {step}
                     </li>
@@ -697,8 +700,8 @@ export default function TicketPage() {
                   Correctly Followed
                 </h3>
                 <ul className="space-y-1">
-                  {analysis.sopCompliance.correctlyFollowed.map((step, idx) => (
-                    <li key={idx} className="text-sm text-uh-success/80 flex items-center gap-2">
+                  {analysis.sopCompliance.correctlyFollowed.map((step) => (
+                    <li key={step} className="text-sm text-uh-success/80 flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-uh-success" />
                       {step}
                     </li>
@@ -715,8 +718,8 @@ export default function TicketPage() {
                   Improvement Suggestions
                 </h3>
                 <ul className="space-y-1">
-                  {analysis.suggestions.map((suggestion, idx) => (
-                    <li key={idx} className="text-sm text-slate-600 flex items-center gap-2">
+                  {analysis.suggestions.map((suggestion) => (
+                    <li key={suggestion} className="text-sm text-slate-600 flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-uh-cyan" />
                       {suggestion}
                     </li>
@@ -740,7 +743,7 @@ export default function TicketPage() {
             ) : (
               messages.map((msg, idx) => (
                 <div
-                  key={idx}
+                  key={`${msg.sender}-${msg.timestamp}-${idx}`}
                   className={`p-4 rounded-xl border max-w-[85%] ${getMessageStyle(msg.sender)}`}
                 >
                   <div className="flex items-center gap-2 mb-2 text-sm text-slate-500">
@@ -849,9 +852,9 @@ export default function TicketPage() {
                   } catch {
                     return ticket.TAGS.split(',');
                   }
-                })().map((tag: string, idx: number) => (
+                })().map((tag: string) => (
                   <span
-                    key={idx}
+                    key={tag}
                     className="px-2 py-1 rounded-full text-xs bg-uh-purple/20 text-uh-purple"
                   >
                     {tag.trim()}

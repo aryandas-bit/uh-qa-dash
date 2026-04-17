@@ -35,7 +35,7 @@ export default function Layout() {
               collapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'
             }`}
           >
-            <h1 className="text-lg font-bold text-uh-purple whitespace-nowrap">QA Dashboard</h1>
+            <h1 className="text-lg font-bold text-uh-purple whitespace-nowrap">QA Console</h1>
           </div>
         </div>
 
