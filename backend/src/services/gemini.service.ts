@@ -2,7 +2,7 @@ import { findMatchingSOP } from './sop.service.js';
 import type { AuditMemoryRecord } from './database.service.js';
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const CONFIGURED_GEMINI_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-2.0-flash';
+const CONFIGURED_GEMINI_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash';
 const DEFAULT_BATCH_CONCURRENCY = Math.max(1, Number(process.env.GEMINI_BATCH_MAX_CONCURRENT || '2'));
 const MAX_SELECTED_MESSAGES = Math.max(1, Number(process.env.GEMINI_MAX_SELECTED_MESSAGES || '80'));
 const MAX_MESSAGE_CHARS = Math.max(100, Number(process.env.GEMINI_MAX_MESSAGE_CHARS || '1000'));
@@ -349,9 +349,9 @@ export async function analyzeTicket(
     const analysis = JSON.parse(cleanedContent.trim()) as QAAnalysis;
     analysis.sopCompliance.matchedSOP = matchedSOP;
     return analysis;
-  } catch (error) {
-    console.error('Gemini analysis error:', error);
-    throw new Error('Failed to analyze ticket with AI');
+  } catch (error: any) {
+    console.error('Gemini analysis error:', error?.message || error);
+    throw error; // re-throw original so callers see the real Gemini error
   }
 }
 
@@ -719,6 +719,7 @@ async function callGemini(prompt: string, apiKey: string) {
       temperature: 0.2,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       responseMimeType: 'application/json',
+      thinkingConfig: { thinkingBudget: 0 },
     },
   };
 
@@ -778,7 +779,6 @@ function sleep(ms: number): Promise<void> {
 function buildModelCandidates(configuredModel: string): string[] {
   return [...new Set([
     configuredModel,
-    'gemini-2.0-flash',
     'gemini-2.5-flash',
   ].filter(Boolean))];
 }
