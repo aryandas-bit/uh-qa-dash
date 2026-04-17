@@ -38,19 +38,10 @@ export default function DashboardPage() {
   });
 
   const latestDate = datesData?.data?.dates?.[0];
-
-  // Once latestDate loads, snap selectedDate to it (if user hasn't picked one yet)
-  useEffect(() => {
-    if (latestDate && !selectedDate) {
-      setSelectedDate(latestDate);
-    }
-  }, [latestDate]);
-
-  const today = new Date().toISOString().slice(0, 10);
-  // For data queries: only non-empty after latestDate loads or user picks
-  const effectiveDate = selectedDate;
-  // For the picker display: always has a value so the picker always renders
-  const pickerDate = selectedDate || today;
+  // Data queries use selectedDate if user picked one, otherwise fall back to latestDate
+  const effectiveDate = selectedDate || latestDate || '';
+  // Picker always has a value — shows today as placeholder while dates are loading
+  const pickerDate = effectiveDate || new Date().toISOString().slice(0, 10);
 
   // Fetch agent daily data
   const { data: agentsData, isLoading: agentsLoading } = useQuery({
