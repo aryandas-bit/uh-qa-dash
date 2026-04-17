@@ -19,6 +19,7 @@ The system combines operational reporting from local SQLite data with LLM-backed
 - Customer history lookup across prior tickets
 - Defaulter tracking for risky or low-quality patterns
 - QC review queue and review history
+- Re-score button to force re-analysis against the latest CX Codex SOPs
 - Google Sheets sync for QC review records
 
 ## Stack
@@ -147,7 +148,7 @@ npm run build
 
 - Primary ticket and agent analytics come from the main SQLite database referenced by `DATABASE_PATH`.
 - QC review decisions are stored separately via `REVIEWS_DB_PATH`.
-- SOP definitions are loaded from the JSON file referenced by `SOPS_PATH`.
+- SOP definitions are loaded from `backend/src/data/sops.json` (a snapshot from [CX Codex](https://cxcodex.vercel.app/cx-codex)). Override the path with `SOPS_PATH` if needed. Update the snapshot when CX Codex SOPs change.
 - Google Sheets sync writes QC review rows to the `QC Reviews` sheet tab.
 
 ## Deployment
