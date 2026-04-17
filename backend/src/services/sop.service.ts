@@ -1,8 +1,11 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-const sopsPath = process.env.SOPS_PATH
-  || path.resolve(process.cwd(), '../all_sops.json');
+// SOPs are sourced from https://cxcodex.vercel.app/cx-codex (CX Codex)
+// src/data/sops.json is the current snapshot — update it when CX Codex SOPs change.
+const defaultSopsPath = path.join(fileURLToPath(import.meta.url), '../../data/sops.json');
+const sopsPath = process.env.SOPS_PATH || defaultSopsPath;
 
 let didWarnMissingSops = false;
 
