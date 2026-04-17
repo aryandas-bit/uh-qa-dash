@@ -18,11 +18,12 @@ import {
   Loader2,
   X,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { agentsApi, ticketsApi, dailyPicksApi } from '../api/client';
+import { api, agentsApi, ticketsApi, dailyPicksApi } from '../api/client';
 import type { DateMode } from '../api/client';
 
 export default function DashboardPage() {
@@ -413,29 +414,43 @@ type DailyPickRow = {
 function DailyAuditSection({ date, dateMode }: { date: string; dateMode: DateMode }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [isPolling, setIsPolling] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
 
+  // Always poll status — keeps UI in sync even if audit was triggered elsewhere
+  const { data: statusData } = useQuery({
+    queryKey: ['daily-picks-status', date, dateMode],
+    queryFn: () => dailyPicksApi.getStatus(date, dateMode),
+    enabled: !!date,
+    refetchInterval: (query) => {
+      const s = (query.state.data as any)?.data;
+      return s?.inProgress ? 2000 : 15000; // 2s while running, 15s idle
+    },
+  });
+
+  const inProgress = statusData?.data?.inProgress || false;
+
+  // Picks data — refetch frequently while audit is running
   const { data: picksData, isLoading: picksLoading } = useQuery({
     queryKey: ['daily-picks', date, dateMode],
     queryFn: () => dailyPicksApi.getPicks(date, dateMode),
     enabled: !!date,
-    staleTime: 1000 * 30,
-  });
-
-  const { data: statusData } = useQuery({
-    queryKey: ['daily-picks-status', date, dateMode],
-    queryFn: () => dailyPicksApi.getStatus(date, dateMode),
-    enabled: !!date && isPolling,
-    refetchInterval: isPolling ? 3000 : false,
+    staleTime: inProgress ? 0 : 1000 * 30,
+    refetchInterval: inProgress ? 3000 : false,
   });
 
   const runAudit = useMutation({
     mutationFn: () => dailyPicksApi.runAudit(date, dateMode),
     onSuccess: () => {
-      setIsPolling(true);
       queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode] });
       queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] });
+    },
+  });
+
+  const resetPicks = useMutation({
+    mutationFn: () => api.delete(`/daily-picks/reset?date=${date}&dateMode=${dateMode}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] });
+      queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode] });
     },
   });
 
@@ -452,17 +467,7 @@ function DailyAuditSection({ date, dateMode }: { date: string; dateMode: DateMod
   const totalPicks = picks?.totalPicks || 0;
   const analyzed = status?.analyzed ?? picks?.picks?.filter((pick: DailyPickRow) => pick.analyzed).length ?? 0;
   const errors = status?.errors || 0;
-  const inProgress = status?.inProgress || false;
   const progressPct = totalPicks > 0 ? Math.round((analyzed / totalPicks) * 100) : 0;
-
-  // Stop polling when audit completes
-  useEffect(() => {
-    if (isPolling && status && !status.inProgress) {
-      setIsPolling(false);
-      queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] });
-      queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode] });
-    }
-  }, [status, isPolling, date, dateMode, queryClient]);
 
   if (picksLoading) return null;
 
@@ -477,17 +482,28 @@ function DailyAuditSection({ date, dateMode }: { date: string; dateMode: DateMod
               : 'Generate random ticket picks for QA review'}
           </p>
         </div>
-        <button
-          onClick={() => runAudit.mutate()}
-          disabled={runAudit.isPending || inProgress}
-          className="btn-primary flex items-center gap-2 text-sm !px-4 !py-2.5"
-        >
-          {runAudit.isPending || inProgress ? (
-            <><Loader2 size={16} className="animate-spin" /> Running...</>
-          ) : (
-            <><Play size={16} /> {totalPicks > 0 ? 'Re-run Audit' : 'Run Daily Audit'}</>
+        <div className="flex items-center gap-2">
+          {totalPicks > 0 && !inProgress && (
+            <button
+              onClick={() => { if (confirm('Reset picks and regenerate with current settings?')) resetPicks.mutate(); }}
+              disabled={resetPicks.isPending}
+              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors"
+            >
+              <RefreshCw size={14} /> Reset
+            </button>
           )}
-        </button>
+          <button
+            onClick={() => runAudit.mutate()}
+            disabled={runAudit.isPending || inProgress}
+            className="btn-primary flex items-center gap-2 text-sm !px-4 !py-2.5"
+          >
+            {runAudit.isPending || inProgress ? (
+              <><Loader2 size={16} className="animate-spin" /> Running...</>
+            ) : (
+              <><Play size={16} /> {totalPicks > 0 ? 'Re-run Audit' : 'Run Daily Audit'}</>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Progress Bar */}

@@ -175,6 +175,14 @@ export async function saveDailyPicks(picks: Array<{ pickDate: string; dateMode: 
   await reviewsDb.batch(statements, 'write');
 }
 
+export async function clearDailyPicks(date: string, dateMode: DateMode = 'activity'): Promise<void> {
+  await initPromise;
+  await reviewsDb.execute({
+    sql: `DELETE FROM daily_picks WHERE pick_date = ? AND date_mode = ?`,
+    args: [date, dateMode],
+  });
+}
+
 export async function markPickAnalyzed(date: string, dateMode: DateMode, ticketId: string, status: string): Promise<void> {
   await initPromise;
   await reviewsDb.execute({

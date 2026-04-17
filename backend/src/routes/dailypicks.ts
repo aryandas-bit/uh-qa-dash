@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDailyPickTicketSummaries, type DateMode } from '../services/database.service.js';
+import { getDailyPickTicketSummaries, clearDailyPicks, type DateMode } from '../services/database.service.js';
 import { getDailyPicks, runDailyAudit, getAuditStatus } from '../services/dailypicks.service.js';
 
 const router = Router();
@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
       return res.status(400).json({ error: 'date parameter is required' });
     }
 
-    const { picks, generated } = await getDailyPicks(date, 20, dateMode);
+    const { picks, generated } = await getDailyPicks(date, undefined, dateMode);
     const summaries = await getDailyPickTicketSummaries(picks.map((pick) => pick.ticketId));
 
     // Group by agent for summary
@@ -76,6 +76,23 @@ router.get('/status', async (req, res) => {
   } catch (error) {
     console.error('Error getting audit status:', error);
     res.status(500).json({ error: 'Failed to get audit status' });
+  }
+});
+
+// DELETE /api/daily-picks/reset — Clear picks for a date so they regenerate with current settings
+router.delete('/reset', async (req, res) => {
+  try {
+    const date = req.query.date as string;
+    const dateMode = (req.query.dateMode as DateMode) || 'activity';
+    if (!date) {
+      return res.status(400).json({ error: 'date parameter is required' });
+    }
+
+    await clearDailyPicks(date, dateMode);
+    res.json({ cleared: true, date, dateMode });
+  } catch (error) {
+    console.error('Error clearing daily picks:', error);
+    res.status(500).json({ error: 'Failed to clear daily picks' });
   }
 });
 
