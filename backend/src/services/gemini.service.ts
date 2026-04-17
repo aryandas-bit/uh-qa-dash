@@ -1,6 +1,8 @@
 import { findMatchingSOP } from './sop.service.js';
 import type { AuditMemoryRecord } from './database.service.js';
 
+const GROQ_API_BASE = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL = process.env.GROQ_MODEL?.trim() || 'llama-3.3-70b-versatile';
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const CONFIGURED_GEMINI_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash';
 const DEFAULT_BATCH_CONCURRENCY = Math.max(1, Number(process.env.GEMINI_BATCH_MAX_CONCURRENT || '2'));
@@ -23,7 +25,7 @@ const LEGACY_GEMINI_MODELS = new Set([
 const GEMINI_MODEL_CANDIDATES = buildModelCandidates(CONFIGURED_GEMINI_MODEL);
 
 console.log(
-  `[Gemini Config] configured=${CONFIGURED_GEMINI_MODEL} candidates=${GEMINI_MODEL_CANDIDATES.join(',')} ` +
+  `[LLM Config] provider=${process.env.GROQ_API_KEY ? 'groq' : 'gemini'} model=${process.env.GROQ_API_KEY ? GROQ_MODEL : CONFIGURED_GEMINI_MODEL} ` +
   `maxMessages=${MAX_SELECTED_MESSAGES} ` +
   `maxMsgChars=${MAX_MESSAGE_CHARS} maxTranscript=${MAX_TRANSCRIPT_CHARS} ` +
   `maxHistory=${MAX_HISTORY_TICKETS} maxSopSteps=${MAX_SOP_STEPS} ` +
@@ -326,10 +328,7 @@ export async function analyzeTicket(
   );
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error('GEMINI_API_KEY environment variable is not set');
-
-    const data = await callGemini(prompt, apiKey);
+    const data = await callLLM(prompt);
     const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!content) {
       console.error('Unexpected Gemini response structure:', JSON.stringify(data, null, 2));
@@ -711,7 +710,73 @@ function truncateText(text: string, maxLength: number): string {
   return `${text.slice(0, maxLength - 3).trim()}...`;
 }
 
-async function callGemini(prompt: string, apiKey: string) {
+async function callLLM(prompt: string): Promise<{ candidates: { content: { parts: { text: string }[] } }[] }> {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (groqKey) {
+    return callGroq(prompt, groqKey);
+  }
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (!geminiKey) throw new Error('No AI API key set (GROQ_API_KEY or GEMINI_API_KEY required)');
+  return callGemini(prompt, geminiKey);
+}
+
+async function callGroq(prompt: string, apiKey: string): Promise<{ candidates: { content: { parts: { text: string }[] } }[] }> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+
+    try {
+      const response = await fetch(GROQ_API_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          response_format: { type: 'json_object' },
+          temperature: 0.2,
+          max_tokens: MAX_OUTPUT_TOKENS,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (response.ok) {
+        const data = await response.json();
+        const text = data.choices?.[0]?.message?.content || '';
+        // Normalise to Gemini-like shape so the caller works unchanged
+        return { candidates: [{ content: { parts: [{ text }] } }] };
+      }
+
+      const errorText = await response.text();
+      lastError = new Error(`Groq ${GROQ_MODEL} HTTP ${response.status}: ${errorText.slice(0, 300)}`);
+
+      if (response.status !== 429 && response.status < 500) {
+        console.error(`Groq error (non-retryable) status=${response.status}:`, errorText);
+        throw lastError;
+      }
+
+      const backoff = RETRY_BACKOFF_MS * attempt;
+      console.warn(`Groq ${response.status}, retry ${attempt}/2 in ${backoff}ms`);
+      await sleep(backoff);
+    } catch (err: any) {
+      clearTimeout(timeout);
+      if (err.name === 'AbortError') {
+        lastError = new Error(`Groq timed out after 20s (attempt ${attempt}/2)`);
+        console.warn(lastError.message);
+        if (attempt < 2) await sleep(RETRY_BACKOFF_MS);
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  throw lastError || new Error('Groq API failed after 2 attempts');
+}
+
+async function callGemini(prompt: string, apiKey: string): Promise<{ candidates: { content: { parts: { text: string }[] } }[] }> {
   const model = CONFIGURED_GEMINI_MODEL;
   const requestBody = {
     contents: [{ parts: [{ text: prompt }] }],
@@ -727,30 +792,25 @@ async function callGemini(prompt: string, apiKey: string) {
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000); // 20s per attempt
+    const timeout = setTimeout(() => controller.abort(), 20000);
 
     try {
       const response = await fetch(`${GEMINI_API_BASE}/${model}:generateContent`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-goog-api-key': apiKey,
-        },
+        headers: { 'Content-Type': 'application/json', 'X-goog-api-key': apiKey },
         body: JSON.stringify(requestBody),
         signal: controller.signal,
       });
 
       clearTimeout(timeout);
 
-      if (response.ok) {
-        return response.json();
-      }
+      if (response.ok) return response.json();
 
       const errorText = await response.text();
       lastError = new Error(`Gemini ${model} HTTP ${response.status}: ${errorText.slice(0, 300)}`);
 
       if (response.status !== 429 && response.status < 500) {
-        console.error(`Gemini API error (non-retryable) model=${model} status=${response.status}:`, errorText);
+        console.error(`Gemini error (non-retryable) status=${response.status}:`, errorText);
         throw lastError;
       }
 
