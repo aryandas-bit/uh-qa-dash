@@ -4,7 +4,8 @@
   "outputDirectory": "frontend/dist",
   "experimentalServices": {
     "api": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "routePrefix": "/api"
     }
   },
   "rewrites": [
