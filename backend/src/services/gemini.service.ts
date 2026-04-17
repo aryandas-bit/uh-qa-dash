@@ -2,18 +2,18 @@ import { findMatchingSOP } from './sop.service.js';
 import type { AuditMemoryRecord } from './database.service.js';
 
 const GROQ_API_BASE = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = process.env.GROQ_MODEL?.trim() || 'llama-3.3-70b-versatile';
+const GROQ_MODEL = process.env.GROQ_MODEL?.trim() || 'llama-3.1-8b-instant'; // 20k TPM free tier
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const CONFIGURED_GEMINI_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash';
-const DEFAULT_BATCH_CONCURRENCY = Math.max(1, Number(process.env.GEMINI_BATCH_MAX_CONCURRENT || '2'));
-const MAX_SELECTED_MESSAGES = Math.max(1, Number(process.env.GEMINI_MAX_SELECTED_MESSAGES || '80'));
-const MAX_MESSAGE_CHARS = Math.max(100, Number(process.env.GEMINI_MAX_MESSAGE_CHARS || '1000'));
-const MAX_TRANSCRIPT_CHARS = Math.max(1000, Number(process.env.GEMINI_MAX_TRANSCRIPT_CHARS || '40000'));
-const MAX_HISTORY_TICKETS = Math.max(1, Number(process.env.GEMINI_MAX_HISTORY_TICKETS || '5'));
-const MAX_SOP_STEPS = Math.max(1, Number(process.env.GEMINI_MAX_SOP_STEPS || '10'));
-const INTER_BATCH_DELAY_MS = Math.max(200, Number(process.env.GEMINI_INTER_BATCH_DELAY_MS || '1000'));
+const DEFAULT_BATCH_CONCURRENCY = Math.max(1, Number(process.env.GEMINI_BATCH_MAX_CONCURRENT || '1'));
+const MAX_SELECTED_MESSAGES = Math.max(1, Number(process.env.GEMINI_MAX_SELECTED_MESSAGES || '15'));
+const MAX_MESSAGE_CHARS = Math.max(100, Number(process.env.GEMINI_MAX_MESSAGE_CHARS || '300'));
+const MAX_TRANSCRIPT_CHARS = Math.max(500, Number(process.env.GEMINI_MAX_TRANSCRIPT_CHARS || '5000'));
+const MAX_HISTORY_TICKETS = Math.max(1, Number(process.env.GEMINI_MAX_HISTORY_TICKETS || '3'));
+const MAX_SOP_STEPS = Math.max(1, Number(process.env.GEMINI_MAX_SOP_STEPS || '5'));
+const INTER_BATCH_DELAY_MS = Math.max(500, Number(process.env.GEMINI_INTER_BATCH_DELAY_MS || '3000'));
 const RETRY_BACKOFF_MS = Math.max(500, Number(process.env.GEMINI_RETRY_BACKOFF_MS || '1000'));
-const MAX_OUTPUT_TOKENS = Math.max(512, Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || '2048'));
+const MAX_OUTPUT_TOKENS = Math.max(256, Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || '800'));
 
 const LEGACY_GEMINI_MODELS = new Set([
   'gemini-2.0-flash',
