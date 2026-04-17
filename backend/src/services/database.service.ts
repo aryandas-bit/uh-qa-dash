@@ -702,7 +702,7 @@ export async function getAvailableDates(): Promise<string[]> {
   const result = await mainDb.execute(`
     SELECT DISTINCT DAY
     FROM raw_tickets
-    WHERE DAY IS NOT NULL
+    WHERE DAY IS NOT NULL AND AGENT_EMAIL IS NOT NULL AND AGENT_EMAIL != ''
     ORDER BY DAY DESC
     LIMIT 90
   `);
