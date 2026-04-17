@@ -8,7 +8,7 @@
     }
   },
   "experimentalServices": {
-    "api/index.ts": {
+    "api": {
       "maxDuration": 60
     }
   },
