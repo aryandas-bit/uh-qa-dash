@@ -2,16 +2,16 @@ import { findMatchingSOP } from './sop.service.js';
 import type { AuditMemoryRecord } from './database.service.js';
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const CONFIGURED_GEMINI_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash';
-const DEFAULT_BATCH_CONCURRENCY = Math.max(1, Number(process.env.GEMINI_BATCH_MAX_CONCURRENT || '1'));
-const MAX_SELECTED_MESSAGES = Math.max(1, Number(process.env.GEMINI_MAX_SELECTED_MESSAGES || '150'));
-const MAX_MESSAGE_CHARS = Math.max(100, Number(process.env.GEMINI_MAX_MESSAGE_CHARS || '2000'));
-const MAX_TRANSCRIPT_CHARS = Math.max(1000, Number(process.env.GEMINI_MAX_TRANSCRIPT_CHARS || '120000'));
-const MAX_HISTORY_TICKETS = Math.max(1, Number(process.env.GEMINI_MAX_HISTORY_TICKETS || '10'));
-const MAX_SOP_STEPS = Math.max(1, Number(process.env.GEMINI_MAX_SOP_STEPS || '15'));
-const INTER_BATCH_DELAY_MS = Math.max(500, Number(process.env.GEMINI_INTER_BATCH_DELAY_MS || '5000'));
-const RETRY_BACKOFF_MS = Math.max(500, Number(process.env.GEMINI_RETRY_BACKOFF_MS || '2000'));
-const MAX_OUTPUT_TOKENS = Math.max(512, Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || '4096'));
+const CONFIGURED_GEMINI_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-2.0-flash';
+const DEFAULT_BATCH_CONCURRENCY = Math.max(1, Number(process.env.GEMINI_BATCH_MAX_CONCURRENT || '2'));
+const MAX_SELECTED_MESSAGES = Math.max(1, Number(process.env.GEMINI_MAX_SELECTED_MESSAGES || '80'));
+const MAX_MESSAGE_CHARS = Math.max(100, Number(process.env.GEMINI_MAX_MESSAGE_CHARS || '1000'));
+const MAX_TRANSCRIPT_CHARS = Math.max(1000, Number(process.env.GEMINI_MAX_TRANSCRIPT_CHARS || '40000'));
+const MAX_HISTORY_TICKETS = Math.max(1, Number(process.env.GEMINI_MAX_HISTORY_TICKETS || '5'));
+const MAX_SOP_STEPS = Math.max(1, Number(process.env.GEMINI_MAX_SOP_STEPS || '10'));
+const INTER_BATCH_DELAY_MS = Math.max(200, Number(process.env.GEMINI_INTER_BATCH_DELAY_MS || '1000'));
+const RETRY_BACKOFF_MS = Math.max(500, Number(process.env.GEMINI_RETRY_BACKOFF_MS || '1000'));
+const MAX_OUTPUT_TOKENS = Math.max(512, Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || '2048'));
 
 const LEGACY_GEMINI_MODELS = new Set([
   'gemini-2.0-flash',
@@ -719,15 +719,14 @@ async function callGemini(prompt: string, apiKey: string) {
       temperature: 0.2,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       responseMimeType: 'application/json',
-      thinkingConfig: { thinkingBudget: 0 }, // disable thinking mode for faster responses
     },
   };
 
   let lastError: Error | null = null;
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 45000); // 45s per attempt
+    const timeout = setTimeout(() => controller.abort(), 20000); // 20s per attempt
 
     try {
       const response = await fetch(`${GEMINI_API_BASE}/${model}:generateContent`, {
@@ -754,23 +753,22 @@ async function callGemini(prompt: string, apiKey: string) {
         throw lastError;
       }
 
-      const retryMatch = errorText.match(/retryDelay.*?(\d+)/);
-      const backoff = retryMatch ? Math.min(parseInt(retryMatch[1], 10) * 1000, 10000) : RETRY_BACKOFF_MS * attempt;
-      console.warn(`Gemini ${model} ${response.status}, retry ${attempt}/3 in ${backoff}ms`);
+      const backoff = RETRY_BACKOFF_MS * attempt;
+      console.warn(`Gemini ${model} ${response.status}, retry ${attempt}/2 in ${backoff}ms`);
       await sleep(backoff);
     } catch (err: any) {
       clearTimeout(timeout);
       if (err.name === 'AbortError') {
-        lastError = new Error(`Gemini ${model} timed out after 45s (attempt ${attempt}/3)`);
+        lastError = new Error(`Gemini ${model} timed out after 20s (attempt ${attempt}/2)`);
         console.warn(lastError.message);
-        if (attempt < 3) await sleep(RETRY_BACKOFF_MS * attempt);
+        if (attempt < 2) await sleep(RETRY_BACKOFF_MS);
       } else {
         throw err;
       }
     }
   }
 
-  throw lastError || new Error(`Gemini API failed after 3 attempts`);
+  throw lastError || new Error(`Gemini API failed after 2 attempts`);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -778,11 +776,10 @@ function sleep(ms: number): Promise<void> {
 }
 
 function buildModelCandidates(configuredModel: string): string[] {
-  // Always try the explicitly configured model first, then fallbacks
   return [...new Set([
     configuredModel,
-    'gemini-2.5-flash',
     'gemini-2.0-flash',
+    'gemini-2.5-flash',
   ].filter(Boolean))];
 }
 
