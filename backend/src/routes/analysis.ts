@@ -216,9 +216,9 @@ router.get('/ticket/:id', async (req, res) => {
         date: ticket.DAY
       }
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error analyzing ticket:', error);
-    res.status(500).json({ error: 'Failed to analyze ticket' });
+    res.status(500).json({ error: 'Failed to analyze ticket', detail: error?.message || String(error) });
   }
 });
 

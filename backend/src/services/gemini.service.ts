@@ -719,38 +719,55 @@ async function callGemini(prompt: string, apiKey: string) {
       temperature: 0.2,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       responseMimeType: 'application/json',
+      thinkingConfig: { thinkingBudget: 0 }, // disable thinking mode for faster responses
     },
   };
 
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const response = await fetch(`${GEMINI_API_BASE}/${model}:generateContent`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-goog-api-key': apiKey,
-      },
-      body: JSON.stringify(requestBody),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45000); // 45s per attempt
 
-    if (response.ok) {
-      return response.json();
+    try {
+      const response = await fetch(`${GEMINI_API_BASE}/${model}:generateContent`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-goog-api-key': apiKey,
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (response.ok) {
+        return response.json();
+      }
+
+      const errorText = await response.text();
+      lastError = new Error(`Gemini ${model} HTTP ${response.status}: ${errorText.slice(0, 300)}`);
+
+      if (response.status !== 429 && response.status < 500) {
+        console.error(`Gemini API error (non-retryable) model=${model} status=${response.status}:`, errorText);
+        throw lastError;
+      }
+
+      const retryMatch = errorText.match(/retryDelay.*?(\d+)/);
+      const backoff = retryMatch ? Math.min(parseInt(retryMatch[1], 10) * 1000, 10000) : RETRY_BACKOFF_MS * attempt;
+      console.warn(`Gemini ${model} ${response.status}, retry ${attempt}/3 in ${backoff}ms`);
+      await sleep(backoff);
+    } catch (err: any) {
+      clearTimeout(timeout);
+      if (err.name === 'AbortError') {
+        lastError = new Error(`Gemini ${model} timed out after 45s (attempt ${attempt}/3)`);
+        console.warn(lastError.message);
+        if (attempt < 3) await sleep(RETRY_BACKOFF_MS * attempt);
+      } else {
+        throw err;
+      }
     }
-
-    const errorText = await response.text();
-    lastError = new Error(`Gemini ${model}: ${response.status}`);
-
-    if (response.status !== 429 && response.status < 500) {
-      console.error(`Gemini API error (non-retryable) model=${model}:`, errorText);
-      throw lastError;
-    }
-
-    // Parse retry delay from API response if available
-    const retryMatch = errorText.match(/retryDelay.*?(\d+)/);
-    const backoff = retryMatch ? Math.min(parseInt(retryMatch[1], 10) * 1000, 10000) : RETRY_BACKOFF_MS * attempt;
-    console.warn(`Gemini ${model} ${response.status}, retry ${attempt}/3 in ${backoff}ms`);
-    await sleep(backoff);
   }
 
   throw lastError || new Error(`Gemini API failed after 3 attempts`);
