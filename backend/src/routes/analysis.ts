@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { analyzeTicket, batchAnalyze, CustomerTicketHistory } from '../services/gemini.service.js';
-import { getTicketById, getFlaggedTickets, getAgentTickets, getCustomerHistory, getRelevantAuditMemories, saveAuditMemory, AuditMemoryRecord, TicketRow, saveQAReview, getQAReview, deleteQAReview, getQAReviewsBulk, getAllQAReviews, getAllQAReviewsWithTickets, saveTicketAnalysis, getStoredTicketAnalysis } from '../services/database.service.js';
+import { getTicketById, getFlaggedTickets, getAgentTickets, getTicketsByIds, getCustomerHistory, getRelevantAuditMemories, saveAuditMemory, AuditMemoryRecord, TicketRow, saveQAReview, getQAReview, deleteQAReview, getQAReviewsBulk, getAllQAReviews, getAllQAReviewsWithTickets, saveTicketAnalysis, getStoredTicketAnalysis, saveQAScore, getQAScoresBulk } from '../services/database.service.js';
 import { upsertReviewToSheet, deleteReviewFromSheet } from '../services/sheets.service.js';
 import { getAllSOPs, getSOPCategories } from '../services/sop.service.js';
 import NodeCache from 'node-cache';
@@ -192,9 +192,13 @@ router.get('/ticket/:id', async (req, res) => {
       });
     }
 
-    // Persist to DB and warm memory cache
+    // Persist full analysis to DB and warm memory cache
     await saveTicketAnalysis(id, analysis, 'manual');
     analysisCache.set(id, analysis);
+    // Also persist score for quick bulk lookup
+    saveQAScore(id, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
+      console.error('[Analysis] Failed to persist QA score:', e)
+    );
 
     const review = await getQAReview(id);
 
@@ -263,46 +267,56 @@ router.delete('/ticket/:id/review', async (req, res) => {
 // POST /api/analysis/batch - Batch analyze tickets
 router.post('/batch', async (req, res) => {
   try {
-    const { date, agentEmail, limit = 20, prioritizeFlagged = true } = req.body;
-
-    if (!date) {
-      return res.status(400).json({ error: 'Date is required' });
-    }
+    const { date, agentEmail, limit = 20, prioritizeFlagged = true, dateMode = 'activity', ticketIds: specificIds, forceRefresh = false } = req.body;
 
     // Get tickets to analyze
     let tickets;
-    if (agentEmail) {
-      tickets = await getAgentTickets(agentEmail, date, limit, 0);
-    } else if (prioritizeFlagged) {
-      tickets = await getFlaggedTickets(date, limit);
+    if (specificIds && specificIds.length > 0) {
+      // Direct ID list — used by chunked frontend calls
+      tickets = await getTicketsByIds(specificIds as string[]);
     } else {
-      // This would need a getAllTickets function - for now use flagged
-      tickets = await getFlaggedTickets(date, limit);
+      if (!date) return res.status(400).json({ error: 'Date is required' });
+      if (agentEmail) {
+        tickets = await getAgentTickets(agentEmail, date, limit, 0, dateMode);
+      } else {
+        tickets = await getFlaggedTickets(date, limit);
+      }
     }
 
     if (tickets.length === 0) {
-      return res.json({ message: 'No tickets to analyze', results: [] });
+      return res.json({ message: 'No tickets to analyze', results: [], newlyAnalyzed: 0 });
     }
 
-    // Check which ones are already cached
     const ticketsTyped = tickets as TicketRow[];
-    const uncached = ticketsTyped.filter(t => !analysisCache.has(t.TICKET_ID));
+    const allTicketIds = ticketsTyped.map(t => String(t.TICKET_ID));
+
+    // Check DB for already-persisted scores so we skip re-analysis after restarts
+    // forceRefresh bypasses both memory and DB cache (e.g. after SOP updates)
+    const dbScores = forceRefresh ? {} : await getQAScoresBulk(allTicketIds);
+
     const cachedResults: any[] = [];
+    const needsAnalysis: TicketRow[] = [];
 
-    ticketsTyped.forEach(t => {
-      const cached = analysisCache.get(t.TICKET_ID);
-      if (cached) {
+    for (const t of ticketsTyped) {
+      const id = String(t.TICKET_ID);
+      const memCached = forceRefresh ? null : analysisCache.get<any>(id);
+      if (memCached) {
+        cachedResults.push({ ticketId: id, analysis: memCached, cached: true });
+      } else if (dbScores[id]) {
+        // Already in DB — re-populate memory cache with a minimal stub carrying the score
         cachedResults.push({
-          ticketId: t.TICKET_ID,
-          analysis: cached,
-          cached: true
+          ticketId: id,
+          analysis: { qaScore: dbScores[id].qaScore, summary: dbScores[id].summary },
+          cached: true,
         });
+      } else {
+        needsAnalysis.push(t);
       }
-    });
+    }
 
-    // Analyze uncached tickets
-    if (uncached.length > 0) {
-      const toAnalyze = await Promise.all(uncached.map(async (ticket) => {
+    // Analyze tickets with no existing score
+    if (needsAnalysis.length > 0) {
+      const toAnalyze = await Promise.all(needsAnalysis.map(async (ticket) => {
         let customerHistory: CustomerTicketHistory[] = [];
         let auditMemories: AuditMemoryRecord[] = [];
         const issueSignature = buildIssueSignature(ticket);
@@ -329,17 +343,18 @@ router.post('/batch', async (req, res) => {
         };
       }));
 
+      console.log(`[Batch] Analyzing ${toAnalyze.length} new tickets (${cachedResults.length} already scored)`);
       const results = await batchAnalyze(toAnalyze, BATCH_ANALYSIS_CONCURRENCY);
       const ticketLookup = new Map(toAnalyze.map((entry) => [String(entry.ticketId), entry]));
 
       for (const [ticketId, analysis] of results.entries()) {
         if (!(analysis instanceof Error)) {
           analysisCache.set(ticketId, analysis);
-          cachedResults.push({
-            ticketId,
-            analysis,
-            cached: false
-          });
+          cachedResults.push({ ticketId, analysis, cached: false });
+
+          await saveQAScore(ticketId, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
+            console.error('[Batch] Failed to persist QA score for', ticketId, e)
+          );
 
           const source = ticketLookup.get(String(ticketId));
           if (source?.ticket?.VISITOR_EMAIL) {
@@ -364,28 +379,25 @@ router.post('/batch', async (req, res) => {
             });
           }
         } else {
-          cachedResults.push({
-            ticketId,
-            error: analysis.message,
-            cached: false
-          });
+          cachedResults.push({ ticketId, error: analysis.message, cached: false });
         }
       }
     }
 
-    // Calculate summary stats
+    // Summary stats
     const successful = cachedResults.filter(r => !r.error);
     const avgScore = successful.length > 0
-      ? successful.reduce((sum, r) => sum + r.analysis.qaScore, 0) / successful.length
+      ? successful.reduce((sum, r) => sum + (r.analysis.qaScore ?? 0), 0) / successful.length
       : 0;
 
     res.json({
       date,
       agentEmail: agentEmail || 'all',
       totalAnalyzed: cachedResults.length,
+      newlyAnalyzed: needsAnalysis?.length ?? 0,
       successCount: successful.length,
       avgQAScore: Math.round(avgScore * 10) / 10,
-      results: cachedResults
+      results: cachedResults,
     });
   } catch (error) {
     console.error('Error in batch analysis:', error);
@@ -454,6 +466,40 @@ router.get('/agent/:email/summary', async (req, res) => {
   } catch (error) {
     console.error('Error fetching agent analysis summary:', error);
     res.status(500).json({ error: 'Failed to fetch analysis summary' });
+  }
+});
+
+// GET /api/analysis/cached-scores - Get persisted QA scores for multiple tickets
+// Reads from the qa_scores DB table (durable) and falls back to in-memory cache
+// for tickets analyzed in the current session but not yet flushed.
+router.get('/cached-scores', async (req, res) => {
+  try {
+    const ticketIdsParam = req.query.ticketIds as string;
+    if (!ticketIdsParam) return res.json({ scores: {} });
+
+    const ticketIds = ticketIdsParam.split(',').map((id: string) => id.trim()).filter(Boolean);
+
+    // Primary: read from the persistent DB table
+    const dbScores = await getQAScoresBulk(ticketIds);
+
+    // Supplement with in-memory cache for tickets not yet in DB
+    ticketIds.forEach(id => {
+      if (!dbScores[id]) {
+        const cached = analysisCache.get<any>(id);
+        if (cached?.qaScore !== undefined) {
+          dbScores[id] = {
+            qaScore: cached.qaScore,
+            summary: cached.summary || null,
+            deductions: cached.deductions || [],
+          };
+        }
+      }
+    });
+
+    return res.json({ scores: dbScores });
+  } catch (error) {
+    console.error('Error fetching cached scores:', error);
+    return res.status(500).json({ error: 'Failed to fetch scores' });
   }
 });
 

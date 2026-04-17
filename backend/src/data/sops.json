@@ -1,0 +1,2865 @@
+[
+  {
+    "title": "Chat Flagging Protocol",
+    "caseIdentifier": "User issue requires escalation to internal team (Ops, Finance, Tech, or other departments)",
+    "description": "Standard protocol for flagging chats to internal teams with proper documentation and follow-up procedures",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Determine Flagging Need",
+        "description": "Identify if the issue requires internal team escalation",
+        "instructions": [
+          "Review the Decision Table to determine if flagging is required",
+          "Issues that require flagging: bugs/tech issues, transaction/refund issues, ops issues (ETA, customs, lost packages, RTO, SKU, engraving), central requests, unresolvable with standard troubleshooting, or distress-related cases",
+          "Issues that DON'T require flagging: fully solved with user confirmation, feedback/feature requests shared, refund/replacement already processed, or waiting for user reply after partial solution"
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Follow Flagging Process",
+        "description": "Execute proper flagging procedure based on channel",
+        "instructions": [
+          "FOR EMAILS: Follow flagged process \u2192 paste flagged URL in 'Flagged Link' box (Details section) \u2192 send Holding message \u2192 change status to ON-HOLD",
+          "FOR CHATS: Follow flagged process \u2192 paste flagged URL in 'Flagged Link' box (Details section) \u2192 send Holding message \u2192 assign chat to FLAGGED QUEUE and agent Mukesh Kumar",
+          "After carefully reviewing your issue, we've determined that it needs to be escalated to our internal team for a thorough check. We've raised it with the concerned team, and typically this process takes less than 48 hours. In rare cases, it may take up to 72 hours. Please rest assured\u2014we'll keep this chat open and update you as soon as we have a resolution.",
+          "Always leave a summary note when flagging a chat with full context"
+        ]
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Set Clear Expectations",
+        "description": "Communicate expected timelines based on issue type",
+        "instructions": [
+          "Logistics ETA: 24-48 hours",
+          "Customs: 2-3 working days",
+          "Shipment redirection: 2-3 working days",
+          "Label: 24-48 hours",
+          "Refund: 3-5 working days (for refund initiation from finance)",
+          "Invoice validation: 2-3 working days",
+          "Tech: 24-48 hours",
+          "Legal: 2-3 working days",
+          "If no update by end of duration, send message asking for more time"
+        ]
+      },
+      {
+        "id": "step-4",
+        "stepNumber": 4,
+        "title": "Follow-Up Guidelines",
+        "description": "Manage flagged chat follow-ups appropriately",
+        "instructions": [
+          "If chat is ACTIVE \u2192 Respond to customer and try to solve",
+          "If chat is INACTIVE \u2192 Follow up with internal team",
+          "If team replies \u2192 Update the customer immediately",
+          "If no reply \u2192 Mark 'no update' in internal notes until next follow-up",
+          "If update received: Relay to user, snooze chat for customer reply, reassign to main queue",
+          "Once user responds and chat reopens, treat as regular live chat"
+        ]
+      },
+      {
+        "id": "step-5",
+        "stepNumber": 5,
+        "title": "Escalate if Delayed",
+        "description": "Escalate to leads if resolution is delayed beyond expected timeline",
+        "resolution": "Chat properly flagged with appropriate team, timeline expectations set, follow-up protocol established",
+        "instructions": [
+          "If flagged chat goes beyond 2 days without resolution \u2192 Highlight to leads: @Parth Saluja @Vishal @Trishala @Shanon @Twinkle @Ashad @Shalm @Govind @Sanil Sharma",
+          "This is taking longer than expected, but our team is actively working on it. We apologize for the delay.",
+          "Keep chat flagged and ensure resolution is tracked"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ops - Delayed Orders & Shifting ETA",
+    "caseIdentifier": "User reports order is delayed and estimated delivery date keeps changing",
+    "description": "Protocol for escalating delayed orders with frequently shifting ETAs to Ops team",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Verify Delay and ETA Changes",
+        "description": "Confirm order delay and ETA shifting pattern",
+        "instructions": [
+          "Check order details in OMS (Order Management System)",
+          "Review shipping history and ETA change log",
+          "Confirm multiple ETA shifts have occurred",
+          "Note original ETA vs current ETA and frequency of changes"
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Escalate to Ops Team",
+        "description": "Flag case to Operations team with complete details",
+        "instructions": [
+          "Tag appropriate POC on #cx_ops_escalations Slack channel",
+          "Fill out ops-escalation-form with required details: order number, user details, original ETA, current ETA, number of ETA shifts, user's concern",
+          "User's order is delayed and the ETA is shifting frequently",
+          "Copy the link to the flagged thread"
+        ]
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Send Holding Message & Queue Assignment",
+        "description": "Inform user and move chat to flagged queue",
+        "resolution": "Delayed order escalated to Ops team, user informed of investigation timeline",
+        "instructions": [
+          "Send holding message to user setting expectation of 24-48 hours for Ops review",
+          "Send chat to 'Flagged Queue' for follow-up",
+          "Monitor for Ops team response within expected timeline"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ops - Order Reroute/Address Change",
+    "caseIdentifier": "User's ring has already shipped and they want to change delivery address",
+    "description": "Guide users to carrier self-service tools first, then escalate if needed",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Recommend Carrier Self-Service",
+        "description": "Direct user to appropriate carrier's address change tool",
+        "instructions": [
+          "Advise user they can directly update delivery address using carrier's online tool",
+          "Available Services: USPS My Choice (USA shipments), FedEx Delivery Manager (UK and EU), DHL ODD - On Demand Delivery (all DHL countries)",
+          "Use appropriate macro: addresschange_usps OR addresschange_fedex OR addresschange_DHL",
+          "Macros contain step-by-step guidance for user to modify address through carrier platform"
+        ],
+        "conditions": {
+          "conditionText": "Can user change address via carrier's platform?",
+          "ifTrue": "resolution-self-service",
+          "ifFalse": "step-2"
+        }
+      },
+      {
+        "id": "resolution-self-service",
+        "stepNumber": 0,
+        "title": "Self-Service Success",
+        "description": "User successfully changed address via carrier tool",
+        "resolution": "User updated delivery address using carrier's self-service tool",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Escalate to Ops for Manual Intervention",
+        "description": "Flag for manual address change when carrier tool fails",
+        "resolution": "Address change request escalated to Ops team for manual intervention",
+        "instructions": [
+          "Tag appropriate POC on #cx_ops_escalations Slack channel",
+          "Fill out ops-escalation-form with: order number, original address, new requested address, carrier name, reason carrier tool didn't work",
+          "Copy link to flagged thread"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ops - Customs Issues",
+    "caseIdentifier": "User facing customs-related issues with ring shipment (stuck in customs, asked to pay charges, or customs on replacement)",
+    "description": "Handle customs charges, clearance issues, and replacement ring customs escalations",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Identify Customs Issue Type",
+        "description": "Determine specific customs problem",
+        "instructions": [
+          "Common scenarios: 'Ring stuck in customs', 'Asked to pay additional amount', 'Asked to pay customs for replacement ring'",
+          "Understand: Customs charges are determined by destination country's government for international shipments",
+          "Customs may contact user for additional info (full name, government ID) to clear shipment"
+        ]
+      },
+      {
+        "id": "step-2a",
+        "stepNumber": 2,
+        "title": "User Asked to Pay Customs Charges",
+        "description": "Explain standard customs fee requirement",
+        "resolution": "User informed that customs charges are standard and required for delivery",
+        "instructions": [
+          "Explain customs charges are standard for international shipments and must be paid for delivery to proceed",
+          "Sample Response: 'We understand your concern. However, we want to clarify that while we do our best to provide transparency about potential customs charges, these fees are determined and levied by your country's customs department and are beyond our control. Once the payment is made, your order will be delivered.'"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "step-2b",
+        "stepNumber": 2,
+        "title": "Ring Stuck in Customs Clearance",
+        "description": "Guide user to check for DHL customs clearance email",
+        "resolution": "User directed to DHL email for customs clearance instructions",
+        "instructions": [
+          "Advise user to check email (including spam/junk folders) for message from DHL requesting documents/information",
+          "Sample Response: 'Could you please check for an email from DHL regarding this order? They will have sent you a link with the customs clearance requirements. You can share those details with them and your order will be processed accordingly.'"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "step-2c",
+        "stepNumber": 2,
+        "title": "Charged Customs for Replacement Ring (DDP)",
+        "description": "Escalate - replacement rings are Delivered Duty Paid, no customs should be charged",
+        "resolution": "Escalated to Mario for affidavit - replacement rings should be DDP (no customs charges)",
+        "instructions": [
+          "Replacement rings are shipped DDP (Delivered Duty Paid) - users should NOT be charged customs",
+          "Ask for screenshot of email/message sent by DHL to user",
+          "Flag to Mario on #cx_ops_escalations and fill ops-escalation-form",
+          "Include screenshot in escalation",
+          "Copy flagged thread link and paste in 'Flagged Link' box",
+          "Add Flagged_Ops tag",
+          "Send to 'Flagged Queue'",
+          "Mario will provide affidavit to share with user to ensure delivery without extra charges",
+          "Set expectation: 2-3 working days"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ops - Delivered but Not Received",
+    "caseIdentifier": "Ring marked as delivered but user has not received it",
+    "description": "Structured process to investigate delivery discrepancies and resolve missing package claims",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Verify Delivery Status",
+        "description": "Confirm tracking shows delivered",
+        "instructions": [
+          "Check tracking status in Order Management System (OMS) to confirm ring is marked as delivered",
+          "Note delivery date, time, and any delivery notes"
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Request User to Check All Locations",
+        "description": "Guide user to check all possible package locations",
+        "instructions": [
+          "Request user check with: neighbors, household members, building security, reception",
+          "Ask if package could have been left in alternate location (porch, garage, mailroom)",
+          "Allow reasonable time for user to conduct thorough search"
+        ],
+        "conditions": {
+          "conditionText": "Did user locate the package?",
+          "ifTrue": "resolution-found",
+          "ifFalse": "step-3"
+        }
+      },
+      {
+        "id": "resolution-found",
+        "stepNumber": 0,
+        "title": "Package Located",
+        "description": "User found the package after checking",
+        "resolution": "User successfully located delivered package",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Request Proof of Delivery from Ops",
+        "description": "Escalate to get official delivery confirmation",
+        "instructions": [
+          "Flag to Mario on #cx_ops_escalations",
+          "Fill ops-escalation-form with: order number, delivery date/time per tracking, user's statement they haven't received it",
+          "Request proof of delivery document",
+          "Copy flagged thread link and paste in 'Flagged Link' box",
+          "Add Flagged_Ops tag",
+          "Send to 'Flagged Queue'",
+          "Set expectation: 24-48 hours"
+        ]
+      },
+      {
+        "id": "step-4",
+        "stepNumber": 4,
+        "title": "Share Proof of Delivery with User",
+        "description": "Provide delivery documentation to user",
+        "instructions": [
+          "Once received from Ops, share proof of delivery with user",
+          "Ask them to check again for package with this specific delivery information",
+          "Proof may include: delivery photo, GPS coordinates, signature, carrier notes"
+        ],
+        "conditions": {
+          "conditionText": "Did user locate package after seeing proof of delivery?",
+          "ifTrue": "resolution-found-after-proof",
+          "ifFalse": "step-5"
+        }
+      },
+      {
+        "id": "resolution-found-after-proof",
+        "stepNumber": 0,
+        "title": "Package Located After Proof",
+        "description": "User found package after reviewing delivery proof",
+        "resolution": "User located package after reviewing proof of delivery",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "step-5",
+        "stepNumber": 5,
+        "title": "Process Replacement",
+        "description": "User still cannot find ring after all checks",
+        "resolution": "Replacement processed after exhaustive delivery investigation",
+        "instructions": [
+          "After all checks and proof of delivery steps completed, process replacement for user",
+          "Document case thoroughly: proof of delivery reviewed, user confirmed package not received, all locations checked",
+          "Follow standard replacement process"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ops - Incorrect Ring Delivered",
+    "caseIdentifier": "User received ring in wrong size or color",
+    "description": "Verify serial number mismatch and process correct ring replacement",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Request Ring Box Image",
+        "description": "Get proof of incorrect item",
+        "instructions": [
+          "Ask user to share clear image of back of ring's box",
+          "Image needed to verify serial number and confirm product details"
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Verify Serial Number in OMS",
+        "description": "Confirm wrong item was shipped",
+        "instructions": [
+          "Use serial number from image to search in Order Management System (OMS)",
+          "Check if item shipped matches user's original order",
+          "Confirm whether wrong size or color was sent",
+          "Document: ordered size/color vs received size/color"
+        ],
+        "conditions": {
+          "conditionText": "Was wrong item shipped?",
+          "ifTrue": "step-3",
+          "ifFalse": "resolution-correct-item"
+        }
+      },
+      {
+        "id": "resolution-correct-item",
+        "stepNumber": 0,
+        "title": "Correct Item Shipped",
+        "description": "Serial number matches order - user may be confused",
+        "resolution": "Verified correct item was shipped - clarified with user",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Escalate to Ops Team",
+        "description": "Flag incorrect shipment case",
+        "instructions": [
+          "Flag on #cx_ops_escalations",
+          "Fill ops-escalation-form with: order number, serial number, ordered size/color, received size/color, image of ring box",
+          "Clearly state: 'Ring was delivered to wrong person' or 'Wrong size/color shipped'",
+          "Provide all relevant details",
+          "Copy flagged thread link and paste in 'Flagged Link' box",
+          "Add Flagged_Ops tag",
+          "Send to 'Flagged Queue'"
+        ]
+      },
+      {
+        "id": "step-4",
+        "stepNumber": 4,
+        "title": "Process Replacement After Ops Confirmation",
+        "description": "Initiate correct ring replacement",
+        "resolution": "Correct ring replacement processed, RTO created for incorrect ring",
+        "instructions": [
+          "Once Ops confirms error, initiate replacement order with CORRECT ring size and color",
+          "Create RTO (Return to Origin) request for incorrect ring",
+          "Inform user: replacement being shipped, incorrect ring will be picked up",
+          "Provide new tracking information once available"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Finance - PayPal Refunds",
+    "caseIdentifier": "International order not purchased from website, or refund can't be processed via OMS - requires PayPal refund",
+    "description": "Process manual PayPal refunds through Finance team",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Collect Required Details",
+        "description": "Gather PayPal refund information from user",
+        "instructions": [
+          "Request from user: PayPal email address, full name, purchase receipt",
+          "Verify order cannot be refunded through OMS",
+          "Calculate refund amount including 6% PayPal transaction fee"
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Flag to Finance Team",
+        "description": "Escalate PayPal refund request",
+        "instructions": [
+          "Tag @NandiniJA on #cx-finance Slack channel",
+          "Fill out refund form with: user's PayPal email, full name, order amount + 6% PayPal fee, purchase receipt",
+          "After filling out form, tag @cxflaggedteam on the thread",
+          "Copy flagged thread link"
+        ]
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Inform User and Queue Assignment",
+        "description": "Set expectations and move to flagged queue",
+        "resolution": "PayPal refund request submitted to Finance team, user informed of timeline",
+        "instructions": [
+          "Inform user: refund request submitted, will update once processed",
+          "Finance processes refunds on Monday, Wednesday, Friday",
+          "Set expectation: 3-5 working days for refund initiation",
+          "Send chat to 'Flagged Queue' for follow-up",
+          "Follow up with Finance according to their processing schedule"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Finance - Bank Transfer Refunds",
+    "caseIdentifier": "Order not purchased from website or OMS refund not possible - requires bank transfer refund",
+    "description": "Process manual bank transfer refunds for Indian and international orders",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Identify Region and Collect Details",
+        "description": "Gather appropriate bank details based on user location",
+        "instructions": [
+          "FOR INDIAN ORDERS: Request name, bank account number, IFSC code, name of bank, purchase receipt",
+          "FOR US/EU/UK/UAE/CA (without PayPal): Request beneficiary bank name, bank account number, routing number or SWIFT code, purchase receipt",
+          "FOR UAE USERS: Ensure IBAN number is collected (critical requirement)",
+          "FOR EU USERS: Ensure complete bank details including IBAN are collected",
+          "Verify order cannot be refunded through OMS"
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Flag to Finance Team",
+        "description": "Escalate bank transfer refund request",
+        "instructions": [
+          "Tag @MohanKumar on #cx-finance Slack channel",
+          "Fill out refund form with: the required details, purchase receipt",
+          "After filling out form, tag @cxflaggedteam on the thread",
+          "Copy flagged thread link"
+        ]
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Inform User and Queue Assignment",
+        "description": "Set expectations and move to flagged queue",
+        "resolution": "Bank transfer refund request submitted to Finance team, user informed of timeline",
+        "instructions": [
+          "Inform user: refund request submitted, will update once processed",
+          "Finance processes refunds on Monday, Wednesday, Friday",
+          "Set expectation: 3-5 working days for refund initiation",
+          "Send chat to 'Flagged Queue' for follow-up",
+          "Follow up with Finance according to processing schedule"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Finance - GST Invoice Generation",
+    "caseIdentifier": "User requests GST invoice for their order",
+    "description": "Process GST invoice generation requests through Finance team",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Collect GST Invoice Details",
+        "description": "Gather required information for GST invoice",
+        "instructions": [
+          "Collect from user: customer name, billing address, shipping address, GST number",
+          "Find Shopify ID: Ring Order Management > Ring Orders > search order > click 'View' > obtain ID",
+          "Check dispatch status (tax invoice can only be raised AFTER product has been dispatched)"
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Flag to Finance Team",
+        "description": "Submit GST invoice generation request",
+        "instructions": [
+          "Tag @fin-invoice on #cx-finance Slack channel",
+          "React to thread with ticket emoji (\ud83c\udfab)",
+          "Fill out relevant form with: customer name, billing address, shipping address, GST number, Shopify ID, dispatch status",
+          "Copy flagged thread link"
+        ]
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Inform User and Queue Assignment",
+        "description": "Set expectations for GST invoice delivery",
+        "resolution": "GST invoice generation request submitted to Finance team",
+        "instructions": [
+          "Inform user: GST invoice request submitted, will receive once generated",
+          "Set expectation: 2-3 working days for invoice validation and generation",
+          "Send chat to 'Flagged Queue' for follow-up"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Tech - General Technical Issues",
+    "caseIdentifier": "Technical issues related to firmware, app errors, or unusual ring problems that cannot be resolved through standard troubleshooting",
+    "description": "Escalate unresolved technical issues to Tech team for investigation",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Complete Standard Troubleshooting",
+        "description": "Ensure all standard troubleshooting steps attempted",
+        "instructions": [
+          "Verify all relevant troubleshooting steps from standard SOPs have been completed",
+          "Document what troubleshooting was attempted and results",
+          "Confirm issue persists after troubleshooting",
+          "Gather technical details: firmware version, app version, device OS, specific error messages"
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Flag to Tech Team",
+        "description": "Escalate technical issue for investigation",
+        "instructions": [
+          "Tag @tech-oncall or @firmware on #support-tech-oncall-requests Slack channel",
+          "React to thread with ticket emoji (\ud83c\udfab)",
+          "Fill out form with: issue description, troubleshooting attempted, firmware version, app version, device details, error messages/screenshots",
+          "Copy flagged thread link"
+        ]
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Inform User and Queue Assignment",
+        "description": "Set expectations for tech team investigation",
+        "resolution": "Technical issue escalated to Tech team for investigation",
+        "instructions": [
+          "Inform user: issue flagged to tech team, will get back as soon as update available",
+          "Set expectation: 24-48 hours for tech team review",
+          "Send chat to 'Flagged Queue' for follow-up",
+          "Monitor for tech team response and relay updates to user promptly"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Labels - RTO/Return Shipping Label Request",
+    "caseIdentifier": "Return to Origin (RTO) required for replacement or refund cases (non-India)",
+    "description": "Generate and share return shipping labels for international returns",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Determine Label Requirements",
+        "description": "Identify region and label type needed",
+        "instructions": [
+          "FOR INDIAN RTO (Bluedart): Label NOT required - follow Indian RTO process",
+          "FOR REPLACED RING IN INDIA: Select RTO option during replacement process",
+          "FOR REFUNDED RING IN INDIA: Fill Indian RTO Typeform",
+          "FOR INTERNATIONAL RETURNS: Label IS required - proceed with label generation",
+          "Shipment partners: USPS (USA), FedEx (EU), DHL (UK and ROW), Bluedart (India)"
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Generate Return Label",
+        "description": "Create RTO label in Order Management System",
+        "instructions": [
+          "Navigate to Order Management > Ring Orders",
+          "Locate the order and click 'View'",
+          "Scroll to 'Initiate RTO' and click it",
+          "Select pickup type: Dropzone (USA) or Doorstep (ROW)",
+          "Choose shipment partner: USPS (USA), FedEx (EU), DHL (UK/ROW/US edge cases), Bluedart (India)",
+          "Select return type and set pickup date (for dropzone, enter today's date)",
+          "Specify reason for return",
+          "Add relevant pickup instructions or comments",
+          "Copy generated return URL"
+        ]
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Share Label and Close",
+        "description": "Provide label to user and complete case",
+        "resolution": "Return shipping label generated and shared, user informed of return process",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Legal Escalations - Fraud Investigation Protocol",
+    "caseIdentifier": "Case shows possible fraud, delivery disputes, suspicious replacement patterns, or requires legal review",
+    "description": "Comprehensive fraud investigation protocol before legal escalation",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Identify Fraud Indicators",
+        "description": "Recognize red flags requiring investigation",
+        "instructions": [
+          "RED FLAGS: Multiple logged-in email addresses for same ring, multiple reachouts from different emails about same ring, confusion about ring-box association, unable/unwilling to provide invoice, user disputes delivery ('marked delivered but not received'), multiple lost-in-transit claims, repeated replacement requests with mismatched history or manipulated addresses, inconsistent/incomplete/contradictory facts",
+          "WHEN TO INITIATE: Delivery disputes, multiple lost claims, repeated replacements with suspicious patterns, any case where facts are inconsistent",
+          "Maintain neutral, non-accusatory tone throughout"
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "PAUSE All Actions Immediately",
+        "description": "Stop all replacements/refunds pending investigation",
+        "instructions": [
+          "Do NOT issue replacement or refund until investigation complete",
+          "Inform user case is under review (neutral language)",
+          "Use tone: 'We're reviewing this for you', 'Working with shipping partner to get full clarity', 'Want to ensure we resolve correctly', 'Team currently investigating delivery details'",
+          "AVOID: Accusing user of fraud, suggesting blame, making commitments before investigation complete, sharing internal suspicion flags"
+        ]
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Compile Full Order History",
+        "description": "Create comprehensive timeline of all associated orders",
+        "instructions": [
+          "Prepare clear summary covering ALL linked orders",
+          "Include: original shipment, replacement orders (if any), tracking details for each dispatch, delivery scan timestamps, user communication timelines",
+          "Create single consolidated timeline for Legal/SME to easily review",
+          "Document any address changes across orders"
+        ]
+      },
+      {
+        "id": "step-4",
+        "stepNumber": 4,
+        "title": "Request OPS Shipping Partner Verification",
+        "description": "Get detailed delivery verification from carrier",
+        "instructions": [
+          "Request from OPS team (they will contact shipping partner) for EACH 'lost in transit' or 'not received' claim:",
+          "Delivery status confirmation, GPS coordinates of delivery, delivery photo (if available), driver notes, confirmation correct address was used, scan history from pickup \u2192 transit \u2192 delivery, any internal flags raised by courier",
+          "Wait for OPS verification results before proceeding"
+        ]
+      },
+      {
+        "id": "step-5",
+        "stepNumber": 5,
+        "title": "Conduct Thorough Fraud Check",
+        "description": "Complete comprehensive internal investigation",
+        "instructions": [
+          "\u2714 CUSTOMER PATTERN REVIEW: How many past replacements? Any previously flagged behavior? Account creation date vs order behavior?",
+          "\u2714 ADDRESS VERIFICATION: Address mismatch across orders? Frequent changes before dispatch?",
+          "\u2714 DEVICE/SERIAL NUMBER HISTORY: Multiple 'lost' rings tied to same customer? Return not received (for return-required cases)? Mismatch in activation patterns?",
+          "\u2714 COMMUNICATION CONSISTENCY: Conflicting user statements? Signs of template/automated responses? Possible edited invoices? User refusing to share evidence or claiming urgency?",
+          "Document all findings systematically"
+        ]
+      },
+      {
+        "id": "step-6",
+        "stepNumber": 6,
+        "title": "SME/Leads Review (MANDATORY)",
+        "description": "Get approval before legal escalation",
+        "instructions": [
+          "Complete full investigation checklist above FIRST",
+          "Share compiled summary with SME/Lead",
+          "Wait for their review and confirmation",
+          "They will guide whether Legal escalation is appropriate",
+          "NEVER directly escalate to Legal without SME/Lead validation"
+        ],
+        "conditions": {
+          "conditionText": "Did SME/Lead approve legal escalation?",
+          "ifTrue": "step-7",
+          "ifFalse": "resolution-no-escalation"
+        }
+      },
+      {
+        "id": "resolution-no-escalation",
+        "stepNumber": 0,
+        "title": "No Legal Escalation Needed",
+        "description": "SME/Lead determined case doesn't require legal involvement",
+        "resolution": "Investigation complete - SME/Lead provided resolution guidance without legal escalation",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "step-7",
+        "stepNumber": 7,
+        "title": "Escalate to Legal Team",
+        "description": "Submit case to Legal after complete investigation and approval",
+        "resolution": "Complete fraud investigation submitted to Legal team for formal review",
+        "instructions": [
+          "Prepare final investigation summary including: chronological order history, OPS team findings, user communication timeline, fraud suspicion points (if any), all documentation collected",
+          "Tag @legal-team in #ultrahuman-ring-cx Slack channel",
+          "Provide detailed compiled history and investigation notes",
+          "Set expectation with user: 2-3 working days for legal review",
+          "Await Legal's guidance before taking any next action",
+          "NOTE: Legal can assist only when there's formal dispute or when making explicit fraud allegation after internal investigation complete"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Chat Tagging Protocol",
+    "caseIdentifier": "All chats must be tagged appropriately for tracking and analytics",
+    "description": "Standard tagging protocol for proper case categorization and follow-up",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Initial Tagging",
+        "description": "Tag chat based on initial query type",
+        "instructions": [
+          "Use 'random' tag initially when you don't know query type, OR for promotional emails/spam",
+          "Use 'logistics_outbound_update' when composing fresh email to user",
+          "Always tag customer messages on time - gives everyone context about query types",
+          "If issue is resolved, tag as 'resolved'"
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Flagging Tags",
+        "description": "Apply appropriate flag tags when escalating",
+        "instructions": [
+          "Use Flagged_Tech - whenever chats flagged to tech team",
+          "Use Flagged_Ops - whenever chats flagged to Ops team",
+          "Use Flagged_Finance - whenever chats flagged to Finance team",
+          "Use Flagged_Other - whenever chats flagged to any other team",
+          "Use Flagged_Labels - whenever requesting RTO shipping label",
+          "If case is flagged and then resolution given, KEEP flag tags on - don't remove them"
+        ]
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Summary Notes",
+        "description": "Always leave detailed summary when flagging",
+        "resolution": "Chat properly tagged for tracking, analytics, and follow-up",
+        "instructions": [
+          "Always leave summary note when flagging chat",
+          "Include: issue description, troubleshooting attempted, what team needs to investigate, user's main concern",
+          "Makes follow-up easier for flagged queue handlers"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Best Practices & Important Metrics",
+    "caseIdentifier": "General guidelines for maintaining high-quality support standards and meeting key performance metrics",
+    "description": "Essential best practices for tone, efficiency, and customer satisfaction",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Tonality Guidelines",
+        "description": "Maintain appropriate tone across all channels",
+        "instructions": [
+          "ALWAYS: Friendly, natural tone - never overly apologetic. It's mutual process - you're helping user, user is helping you!",
+          "IN-APP CHAT: Chat-like conversations, sound light, friendly, proactive, super helpful",
+          "EMAILS: Detailed responses (reduce back-forth), sound light but detail-oriented, responsible, proactive, super helpful. Users email to escalate/complain/feel heard - run all checks, be put together, give closure",
+          "SOCIAL PLATFORMS: Chat-like conversations, sound light, friendly, super helpful",
+          "NEVER: Formal responses like 'Good Morning, Sir/Ma'am'. Use 'Hey!' / 'Hello!' / 'Hi there!'"
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Efficiency Best Practices",
+        "description": "Work smart to resolve queries quickly",
+        "instructions": [
+          "Be aware of different macros and shortcuts - makes resolving queries easier",
+          "When using macros, PERSONALIZE them - message shouldn't sound like template",
+          "Always aim to establish connection with users and ensure they feel heard",
+          "Close conversation when done answering all questions",
+          "While attending Kustomer messages, go back to 'Searches' page periodically to ensure no chats missed",
+          "Prioritize queries well - cover low-hanging fruit first, but identify impatient users",
+          "Feel free to add macros to make team's life easier - let team know when you do!"
+        ]
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Key Performance Metrics",
+        "description": "Understanding important metrics you're measured on",
+        "resolution": "Understanding of best practices and key metrics for high-quality support delivery",
+        "instructions": [
+          "FRT (First Response Time): Respond with greeting like 'Hey!' / 'Hello!' / 'Hi there!' as soon as you see new message to maintain FRT",
+          "AHT (Average Handling Time): Measures how fast you resolve queries. Prioritize well - low-hanging fruit first, but be smart about identifying impatient users",
+          "CSAT Score (Customer Satisfaction): At end of each chat, users sent short satisfaction survey. Can rate conversation 1-5. Aim for high satisfaction by being helpful, efficient, and empathetic"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ring Replacement Policy - Comprehensive (Sept 2025)",
+    "caseIdentifier": "User requests ring replacement due to defect, disconnection, data sync issues, or other hardware issues",
+    "description": "Complete ring replacement policy including warranty validation, replacement count checks, UHX verification, regional warranty periods, and US trade restrictions",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "MANDATORY Pre-Check 1: Replacement Count Validation",
+        "description": "Check how many replacements user has already received - CRITICAL STEP",
+        "instructions": [],
+        "conditions": {
+          "conditionText": "If replacements < 3",
+          "ifTrue": "step-2",
+          "ifFalse": "resolution-outside-policy"
+        }
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "MANDATORY Pre-Check 2: Activation Date & Warranty Period Validation",
+        "description": "Verify warranty eligibility based on activation date and user region - ZERO TOLERANCE FOR ERRORS",
+        "instructions": [
+          "\ud83d\udd0d CHECK ACTIVATION DATE: Note the activation date from OMS for the ORIGINAL (first ever) ring purchased by serial number",
+          "\ud83c\udf0d REGIONAL WARRANTY PERIODS:",
+          "\u2022 1 YEAR: US, India, Canada (non-Costco), UK, UAE, Australia, Singapore, most Asia/Africa/LATAM countries",
+          "\u2022 2 YEARS: EU countries (Germany, France, Netherlands, Belgium, Austria, Italy, Poland, etc.), Switzerland, Norway, Iceland, Canada (Costco rings only)",
+          "\u2022 3 YEARS: Spain, Sweden, Portugal",
+          "\ud83d\udccb FOR NON-WEBSITE/MANUAL/RETAIL PURCHASES: Use invoice purchase date as source of truth instead of activation date",
+          "\u26a0\ufe0f IF ACTIVATION > WARRANTY PERIOD \u2192 Outside policy. Agent MAY deny replacement (escalation NOT mandatory for clear-cut denials)",
+          "\u2705 IF WITHIN WARRANTY PERIOD \u2192 Proceed to Step 3",
+          "\u26a0\ufe0f NOTE: UK is NOT EU - 1 year warranty only. Norway/Iceland are NOT EU but have 2-year warranty.",
+          "\ud83d\udd0d HYGIENE: Always check replacement logs as additional validation",
+          "\ud83d\udca1 ESCALATION RULE: Escalation to leads is ONLY required when agent believes an exception should be made (e.g., 4th replacement, out-of-policy replacement). Clear-cut policy denials do NOT require escalation."
+        ],
+        "conditions": {
+          "conditionText": "If within warranty period",
+          "ifTrue": "step-3",
+          "ifFalse": "resolution-outside-policy"
+        }
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "UHX Subscription Verification",
+        "description": "Verify UltrahumanX subscription status if applicable",
+        "instructions": [
+          "\ud83d\udd0d CHECK UHX STATUS: Verify on OMS dashboard if UHX subscription is active",
+          "\u26a0\ufe0f DO NOT ASK USER if they purchased UHX - check the dashboard first. Only clarify if subscription not found on login email.",
+          "\ud83d\udccb UHX REPLACEMENT RULES:",
+          "\u2022 Non-UHX Users: Eligible for up to 3 replacements within standard 1-year warranty",
+          "\u2022 UHX 1-Year Plan: Eligible for up to 3 replacements within 1 year from ORIGINAL ring activation",
+          "\u2022 UHX 2-Year Plan: Eligible for up to 3 replacements within 2 years from ORIGINAL ring activation",
+          "\u2022 UHX Renewal: Users can renew within 15 days after 1-year plan expires to continue coverage",
+          "\u2022 2-Year UHX = Maximum coverage available (no further renewal)",
+          "\ud83d\udd0d SPECIAL CASE: 1-Year (old) to 2-Year Transition:",
+          "  - Verify if renewal occurred within 15 days of earlier plan expiration",
+          "  - Consult SME/Leads for these cases",
+          "\ud83d\udd0d EDGE CASE: 1-Year (old) UHX renewed in 2025 and currently active \u2192 Treat ring as under warranty (consult SME/Lead)",
+          "\u26a0\ufe0f If UHX renewal NOT done within 15 days \u2192 May show 'Outside Policy' for Shopify orders \u2192 Flag to SME/Leads immediately"
+        ]
+      },
+      {
+        "id": "step-4",
+        "stepNumber": 4,
+        "title": "Troubleshooting & Firmware Check",
+        "description": "Complete necessary troubleshooting before replacement - adjust based on user frustration level",
+        "instructions": [
+          "\u2705 IF USER IS FRUSTRATED + NOT ON LATEST FIRMWARE:",
+          "  - AVOID asking them to update firmware unless specifically instructed",
+          "  - If recent firmware update pushed within last 7 days \u2192 Avoid pushing update unless beneficial",
+          "  - If user completed troubleshooting (TSW) and is clearly irritated \u2192 Skip further troubleshooting",
+          "\u2705 IF USER WITHIN POLICY + FRUSTRATED \u2192 Proceed with replacement directly",
+          "\u26a0\ufe0f IF USER OUTSIDE POLICY + FRUSTRATED \u2192 Offer trade-in or Wabi-Sabi ring (based on user preference)",
+          "\ud83d\udcdd Leave internal note explaining why troubleshooting steps were skipped for context",
+          "\ud83d\udca1 GOAL: Reduce friction, make customer feel supported not overwhelmed. Adjust tonality accordingly.",
+          "\u2705 IF TROUBLESHOOTING COMPLETED \u2192 Proceed to Step 5"
+        ]
+      },
+      {
+        "id": "step-5",
+        "stepNumber": 5,
+        "title": "US Trade Restriction Check (Critical)",
+        "description": "Apply US-specific restrictions due to recent trade ruling",
+        "instructions": [
+          "\ud83d\udeab US USERS OUT OF POLICY: NO Wabi Sabi rings. NO Trade-in offers.",
+          "\ud83d\udccb HOLDING RESPONSE FOR US USERS:",
+          "We've temporarily paused direct U.S. sales of the Ultrahuman Ring AIR following a recent trade ruling. While direct purchases are unavailable, some retailers may still have limited pre-ruling inventory for customers seeking to purchase the product. In the meantime, we're accelerating the launch of the next-generation Ultrahuman Ring and exploring U.S. manufacturing options to ensure our community continues to have access to Ultrahuman's technology in the future. You can read more details here. All other products and the Ultrahuman app are fully operational and available in the US.",
+          "\u2705 NON-US USERS: Standard replacement policy applies"
+        ]
+      },
+      {
+        "id": "step-6",
+        "stepNumber": 6,
+        "title": "Replacement Execution (Within Policy)",
+        "description": "Process replacement for users within policy",
+        "resolution": "Replacement processed successfully with all mandatory checks completed",
+        "instructions": [
+          "\u2705 ELIGIBILITY CONFIRMED:",
+          "  - Replacements < 3 \u2713",
+          "  - Within warranty period \u2713",
+          "  - Troubleshooting completed (or skipped due to frustration) \u2713",
+          "\ud83d\udccb ACTION: Process standard ring replacement",
+          "\ud83d\udcdd INTERNAL NOTE: Document replacement count, activation date, warranty period, UHX status"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-outside-policy",
+        "stepNumber": 0,
+        "title": "Outside Policy Resolution",
+        "description": "Handle cases that don't meet replacement criteria - Agent CAN deny without escalation",
+        "resolution": "Out-of-policy case handled with appropriate alternative offered or explanation provided with empathetic tone",
+        "instructions": [
+          "\u274c OUTSIDE POLICY SCENARIOS:",
+          "\u2022 Replacements already = 3 or more",
+          "\u2022 Activation date beyond warranty period",
+          "\u2022 UHX expired and not renewed within 15 days",
+          "\u2705 AGENT CAN DENY REPLACEMENT - Escalation is NOT mandatory for clear policy denials",
+          "\ud83d\udd04 OFFER ALTERNATIVES (if applicable):",
+          "\u2022 Trade-in option (if not US user)",
+          "\u2022 Wabi-Sabi ring (if not US user)",
+          "\u2022 User can choose preferred option",
+          "\ud83d\udeab US USERS: NO trade-in or Wabi-Sabi offers. Provide US holding response from Step 5.",
+          "\ud83d\udcdd Document reasoning in internal note",
+          "\u26a0\ufe0f EXCEPTION ESCALATION: Only escalate to @cx-leads if you believe a replacement IS warranted despite being outside policy (e.g., recurring hardware defects, exceptional circumstances)",
+          "\ud83d\udcac TONALITY IS CRITICAL: Even when denying, be empathetic, understanding, solution-focused. Acknowledge frustration, explain policy clearly but warmly. AVOID rigid/defensive language.",
+          "\u26a0\ufe0f CX QUALITY: A policy denial done with poor tone/rigid language is still a CX failure. The WAY you communicate matters as much as the decision.",
+          "\ud83d\udd0d EDGE CASE - RECURRING DEFECTS: If a REPLACEMENT ring fails shortly after being issued (e.g., 2-3 months), even if original warranty expired, consider the context. This may warrant softer handling or escalation for exception review - use CX judgment."
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-refund",
+        "stepNumber": 0,
+        "title": "Refund Guidelines",
+        "description": "Handle refund requests according to policy",
+        "resolution": "Refund processed or denied according to policy guidelines",
+        "instructions": [
+          "\ud83d\udccb REFUND ELIGIBILITY:",
+          "\u2022 Within 30 days of activation \u2192 Full refund (any reason, no questions asked)",
+          "\u2022 Up to 1 year from purchase \u2192 Push for replacement first. Refund only if faulty/defective (NOT 'changed mind', 'don't like it', 'uncomfortable')",
+          "\u2022 Out of warranty \u2192 No refunds",
+          "\u2022 3 replacements done within 1st year + 4th issue occurs \u2192 Offer full refund",
+          "\u26a0\ufe0f EXTREME EXCEPTIONS: Loop in @cx-leads before processing",
+          "\u2705 ALWAYS complete necessary checks before actioning refund",
+          "\ud83d\udcdd NOTE: Warranty period = 1 year (2 years for EU) from ORIGINAL ring activation date on OMS"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Misc - Sales and Serviceable Countries",
+    "caseIdentifier": "Tag: Misc | Sales and Serviceable countries | Sales callback, subscription, trade-in, promo, purchase routing, and country availability questions",
+    "description": "Lead Callback SOP under Misc with updated sales routing, new Typeform workflow, and approved country/serviceability response handling.",
+    "category": "general",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Apply Scope, Tags, and Routing Baseline",
+        "description": "Apply metadata and use the updated callback flow",
+        "instructions": [
+          "Support Level: L1",
+          "Applicable Regions: Global",
+          "Related tags: lead_callback, Trade_in_faq.",
+          "All other relevant tags may be applied as needed.",
+          "IMPORTANT: Old Typeform is deactivated. Always use new Sales Typeform for routing.",
+          "New Typeform: https://ultrahumanapp.typeform.com/yOi1E7Wy?utm_source=CXTEAM&utm_campaign=CXTEAM#source_origin=yOi1E7Wy"
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Handle Subscription-Related Queries",
+        "description": "Route subscription-type requests correctly",
+        "resolution": "Subscription query handled/routed as per updated Lead Callback SOP",
+        "instructions": [
+          "PowerPlugs queries are fully handled by CX.",
+          "For UHX queries, fill the new Sales Typeform for routing and visibility.",
+          "Share accurate expectation and confirm request is logged."
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Handle Trade-In Requests",
+        "description": "Validate eligibility and route request to Sales",
+        "resolution": "Trade-in request captured with model validation and correct regional eligibility handling",
+        "instructions": [
+          "Confirm user's current ring model.",
+          "Confirm desired trade-in ring.",
+          "Share pricing from the Trade-In Pricing Sheet.",
+          "Log request through the new Sales Typeform for Sales visibility.",
+          "CRITICAL: Trade-in is NOT applicable for US users at this time."
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "step-4",
+        "stepNumber": 4,
+        "title": "Handle Sales or Promo-Specific Questions",
+        "description": "Campaign-related sales/promotional handling",
+        "resolution": "Promo/sales question answered and logged for Sales visibility",
+        "instructions": [
+          "CX verifies promo details internally.",
+          "Respond directly to the user with verified details.",
+          "Log the request through the new Sales Typeform.",
+          "Add complete context in #scheduled-callbacks and tag Sales where relevant."
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "step-5",
+        "stepNumber": 5,
+        "title": "Handle Purchase-Related Queries",
+        "description": "Collect contact details and trigger callback workflow",
+        "resolution": "Purchase query routed to Sales callback flow with complete context",
+        "instructions": [
+          "Collect user's contact details.",
+          "Fill the new Sales Typeform.",
+          "Locate the entry in #scheduled-callbacks.",
+          "Tag Sales team and include relevant context for follow-up."
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "step-6",
+        "stepNumber": 6,
+        "title": "Handle Serviceability & Country Availability Queries",
+        "description": "Use approved country lists and messaging",
+        "resolution": "Country serviceability query handled with approved regional policy and messaging",
+        "instructions": [
+          "Unserviceable countries list: Belarus, Central African Republic, Eritrea, Ethiopia, Iran, Iraq, Libya, North Korea, Pakistan, Palestinian Territories, Russia, Somalia, Syria, Yemen.",
+          "Israel is newly serviceable.",
+          "If user shares criticism/timing concern/boycott statement, use approved neutral response:",
+          "We understand you have strong feelings. Ultrahuman's mission is to make health technology accessible to people everywhere. We serve customers across many countries globally, and our focus remains on science, health, and human wellbeing.",
+          "If user asks why another country is not yet available, use approved response:",
+          "We hope Ring AIR will eventually be available to everyone, everywhere. Our expansion roadmap depends on logistics, regulatory clearances, and market readiness so that we can deliver the best experience to all customers.",
+          "Stay neutral, empathetic, and non-political.",
+          "Escalate highly escalated or threatening messages to SME/Lead."
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Dead on Arrival",
+    "caseIdentifier": "The user is trying to pair their new ring. The ring is experiencing an issue with starting up and pairing.",
+    "description": "Troubleshooting flow for rings that won't start up or pair when new. Bot Entry: User selects 'DOA Issue' or mentions their new ring is not pairing immediately out of the box.",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Charger Test",
+        "macroName": "Ring_Charger_Test",
+        "description": "Let's troubleshoot your new ring. We'll start with a few quick checks to confirm the issue and guide you toward a resolution.",
+        "instructions": [
+          "Let's troubleshoot your new ring. We'll start with a few quick checks to confirm the issue and guide you toward a resolution.",
+          "",
+          "A couple of quick checks to proceed ahead with the troubleshooting here:",
+          "",
+          "1. Could you please confirm the type of adapter that you are using with the charging dock (Brand name and whether it is a normal or fast charger)? The adapter should be within 20 watts and less than 2 AMPS. Please attach images of the adapter for reference.",
+          "",
+          "2. Have you tested the charging cable with other devices to confirm its functionality? If possible, try using a different cable to rule out cable issues.",
+          "",
+          "3. When you switch on the charging dock without placing the ring on it, does the LED light turn purple?",
+          "",
+          "4. When you place the ring on the charging dock, does the LED light on the dock change to a breathing white light? If not, please flip the ring and observe the LED colour.",
+          "",
+          "This information will help us narrow down the potential causes of the charging issue and provide more targeted solutions.",
+          "",
+          "\u26a0\ufe0f If the charger does NOT show breathing white after placing the ring \u2192 Replace the charger"
+        ],
+        "conditions": {
+          "conditionText": "If the charger shows white breathing light after ring is placed",
+          "ifTrue": "step-3",
+          "ifFalse": "resolution-charger"
+        }
+      },
+      {
+        "id": "resolution-charger",
+        "stepNumber": 0,
+        "title": "Replace Charger",
+        "description": "Charger replacement resolution",
+        "resolution": "Replace the charger",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 0,
+        "title": "New Ring Setup Flow",
+        "macroName": "New_Set_up_new_ring",
+        "description": "If the above steps have not worked, we try the 'New Ring set up' flow",
+        "instructions": [
+          "Can you please close your app, reopen it in 10 seconds, and let me know once done? (This step will allow our tech team to access your logs.)",
+          "Step 1: Unpair the Ring: Open your phone's Bluetooth settings and forget the device (listed as UH____).",
+          "Step 2: Toggle Bluetooth: Turn Bluetooth off and then back on.",
+          "Step 3: Reconnect the Ring: Restart your phone and reopen the app. Navigate to the 'Home' tab. Click on 'Connect Ring' and attempt to reconnect the ring.",
+          "If you're still unable to connect, proceed to step 4.",
+          "Step 4: Test Charging Accessories (to confirm your charger is functioning properly): Use a different cable and adapter to charge the ring. Charge the ring for about 15 minutes on each side using the new accessories.",
+          "If the issue continues, please share a screenshot of what you see when you click 'Connect Ring,' so we can help you further."
+        ],
+        "conditions": {
+          "conditionText": "If the connection is successful",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-4"
+        }
+      },
+      {
+        "id": "step-4",
+        "stepNumber": 0,
+        "title": "Replace Ring",
+        "description": "If all of the above does not work, we go ahead and replace the ring",
+        "resolution": "Replace the ring",
+        "instructions": [
+          "Initiate ring replacement process",
+          "Follow standard replacement SOP"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "The ring has been successfully connected",
+        "resolution": "Issue resolved - Ring connected successfully",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ring Battery - High Drain",
+    "caseIdentifier": "When the ring's battery drains rapidly: The battery lasts less than 4 days and requires frequent charging - this means the battery drain is MORE THAN 25% per day. General macro - battery_service_sop",
+    "description": "Troubleshooting flow for rapid battery drain issues. Primary resolution: Route user to Battery Troubleshooting Wizard.",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-0",
+        "stepNumber": 1,
+        "title": "Battery Troubleshooting Wizard",
+        "macroName": "Battery_Troubleshooting_Wizard",
+        "description": "Primary resolution - direct user to the Battery Troubleshooting Wizard (TSW)",
+        "instructions": [
+          "\ud83d\udd0b PRIMARY RESOLUTION: Route the user to the Battery Troubleshooting Wizard",
+          "Link: https://ultrahuman.onelink.me/QqSM/ren08swf",
+          "",
+          "Bot Flow Entry Point:",
+          "Let's help you with your battery issue. I'll check if the Troubleshooting Wizard (TSW) has already been run on your app today.",
+          "Can you please share your registered email ID?",
+          "",
+          "Check TSW status on Troubleshooting Dashboard > Troubleshoot Wizard Sessions:",
+          "Looks like you started the Wizard but haven't completed it. Resume here: https://ultrahuman.onelink.me/QqSM/ren08swf",
+          "The Wizard was not completed. Please retry: https://ultrahuman.onelink.me/QqSM/ren08swf",
+          "\u2022 COMPLETED: Proceed to backend Battery SOP checks",
+          "Wizard hasn't been started. Please begin here: https://ultrahuman.onelink.me/QqSM/ren08swf"
+        ],
+        "conditions": {
+          "conditionText": "Did the Troubleshooting Wizard resolve the issue?",
+          "ifTrue": "resolution-success-1",
+          "ifFalse": "step-firmware-reset"
+        }
+      },
+      {
+        "id": "step-firmware-reset",
+        "stepNumber": 2,
+        "title": "Escalation Steps",
+        "description": "Push latest firmware, then factory reset the ring and enable Chill Mode to observe true drain rate",
+        "instructions": [
+          "1. Upgrade Firmware",
+          "2. Factory Reset",
+          "3. Enable Chill Mode",
+          "4. Observe",
+          "",
+          "STEP 1 \u2014 UPGRADE FIRMWARE:",
+          "I have pushed the latest firmware to your ring.",
+          "Please quit the app completely, and reopen the app in a while.",
+          "If you don't see the Firmware Update pop-up, it should appear within the next few hours.",
+          "If it doesn't, please head to Ring Battery View > scroll down > 'Check for Firmware Update'.",
+          "Follow the prompts to complete the update.",
+          "",
+          "STEP 2 \u2014 FACTORY RESET + CHILL MODE:",
+          "Please factory reset your ring: Ring Battery View > scroll down > Factory Reset > follow the prompts.",
+          "Keep the ring on the charger \u2014 you'll see a green LED light. The ring will disconnect from the app (expected).",
+          "Once you see the green light, remove the ring from the charger and reconnect.",
+          "Video guide: https://youtu.be/2CzUj0l6kWo",
+          "",
+          "After the reset, immediately enable Chill Mode:",
+          "Ring homepage > ring icon (top right) > 'Choose a Battery Usage Mode' > Toggle on Chill Mode",
+          "",
+          "Observe battery drain from 100% to 10% with Chill Mode on. Let us know when it reaches 10% so we can check the drain rate."
+        ],
+        "conditions": {
+          "conditionText": "Did the escalation steps resolve the issue?",
+          "ifTrue": "resolution-success-2",
+          "ifFalse": "step-replace"
+        }
+      },
+      {
+        "id": "step-replace",
+        "stepNumber": 3,
+        "title": "Replace the Ring",
+        "description": "In case of high BDR post the above steps, replace the ring",
+        "resolution": "Initiate replacement",
+        "instructions": [
+          "In case of a high BDR (Battery Drain Rate) post the above steps, we replace the ring.",
+          "For externals - fill in the form and wait for approval on the sheet.",
+          "",
+          "Flowchart reference: https://miro.com/welcomeonboard/OE1takpKM3hsOGptSVNjblFCbVJHazZnU2lvSnl0UFVVeTlXSTNWa1FxNXhrWUpIRHpTcUhSZXNBYmQ0aXhReHoyM0pnMmZkUFdQcVk3TWwzcHlnRkJHVTF3OU1xbTRSU2xaOUZsY2UxNm5QZFZ2V21TVWJEWkRCbDZKV3VtRkhBS2NFMDFkcUNFSnM0d3FEN050ekl3PT0hdjE="
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success-1",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "Battery drain issue resolved via Troubleshooting Wizard",
+        "resolution": "Ring battery drain resolved",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success-2",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "Battery drain issue resolved via escalation steps",
+        "resolution": "Battery stable",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ring Not Connecting/Advertising",
+    "caseIdentifier": "The user is trying to pair their ring, but the ring is experiencing an issue with advertising and pairing with the app.",
+    "description": "TSW-based troubleshooting flow for connection issues. Primary path: Route user through Troubleshooting Wizard (TSW).",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-0",
+        "stepNumber": 1,
+        "title": "Connection Troubleshooting Wizard",
+        "description": "Primary resolution - direct user to the Connection Troubleshooting Wizard (TSW)",
+        "instructions": [
+          "\ud83d\udd0b PRIMARY RESOLUTION: Route the user to the Connection Troubleshooting Wizard",
+          "Link: https://ultrahuman.onelink.me/QqSM/b3n6ggzh",
+          "",
+          "Bot Flow Entry Point:",
+          "Let's help you with your connection issue. I'll check if the Troubleshooting Wizard (TSW) has already been run on your app today.",
+          "Can you please share your registered email ID?",
+          "",
+          "Check TSW status on Troubleshooting Dashboard > Troubleshoot Wizard Sessions:",
+          "Looks like you started the Wizard but haven't completed it. Resume here: https://ultrahuman.onelink.me/QqSM/b3n6ggzh",
+          "The Wizard was not completed. Please retry: https://ultrahuman.onelink.me/QqSM/b3n6ggzh",
+          "\u2022 COMPLETED: Proceed to check if the ring is connected or not",
+          "Wizard hasn't been started. Please begin here: https://ultrahuman.onelink.me/QqSM/ren08swf"
+        ],
+        "conditions": {
+          "conditionText": "Did the Connection Wizard resolve the issue?",
+          "ifTrue": "resolution-success-1",
+          "ifFalse": "step-ts1"
+        }
+      },
+      {
+        "id": "step-ts1",
+        "stepNumber": 2,
+        "title": "Connection TS1",
+        "description": "Manual connection troubleshooting - force close app, toggle Bluetooth, and re-pair",
+        "instructions": [
+          "Ask user to force close the Ultrahuman app completely.",
+          "Toggle Bluetooth off, wait 10 seconds, then toggle back on.",
+          "Reopen the app and attempt to pair the ring again.",
+          "If still not connecting, ask user to restart their phone and retry.",
+          "Ensure the ring is charged (at least 20%) before pairing."
+        ],
+        "conditions": {
+          "conditionText": "Did Connection TS1 resolve the issue?",
+          "ifTrue": "resolution-success-2",
+          "ifFalse": "step-ts2"
+        }
+      },
+      {
+        "id": "step-ts2",
+        "stepNumber": 3,
+        "title": "Connection TS2",
+        "description": "Advanced connection troubleshooting - factory reset and re-pair",
+        "instructions": [
+          "Go to Ring Battery View > scroll down > Factory Reset > follow the prompts.",
+          "Keep the ring on the charger \u2014 you'll see a green LED light. The ring will disconnect from the app (expected).",
+          "Once you see the green light, remove the ring from the charger and attempt to reconnect.",
+          "",
+          "After reset, ensure the app is updated to the latest version and retry pairing.",
+          "Check firmware: Ring Battery View > scroll down > 'Check for Firmware Update'."
+        ],
+        "conditions": {
+          "conditionText": "Did Connection TS2 resolve the issue?",
+          "ifTrue": "resolution-success-3",
+          "ifFalse": "step-replace"
+        }
+      },
+      {
+        "id": "step-replace",
+        "stepNumber": 4,
+        "title": "Replace the Ring",
+        "description": "All troubleshooting steps exhausted - initiate replacement",
+        "resolution": "Initiate replacement",
+        "instructions": [
+          "Since all troubleshooting steps have been completed and the ring is still not connecting, we will proceed with a replacement.",
+          "For externals - fill in the form and wait for approval on the sheet."
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success-1",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "Ring connected successfully via Connection Wizard",
+        "resolution": "Ring connection issue resolved via TSW",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success-2",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "Ring connected successfully after Connection TS1",
+        "resolution": "",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success-3",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "Ring connected successfully after Connection TS2",
+        "resolution": "",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Incorrect Movement Index",
+    "caseIdentifier": "Discrepancy in the step count: The ring is either underreporting or overreporting the step count, or there is a discrepancy when comparing the step counts across different wearables.",
+    "description": "Troubleshooting flow for step count and movement tracking issues. Check OMS (OOB Movement Stats) on dashboard for diagnostic data.",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Ring Fit Check",
+        "macroName": "HR9_Incorrect_Sleep_TS1",
+        "description": "Check the fit of the ring and ensure proper sensor orientation",
+        "instructions": [
+          "Can you confirm how the ring fits you? The ring can be worn on the index, middle, or ring finger and should fit snugly (not too tight or too loose).",
+          "",
+          "To remove the ring, push from the bottom and slide it off.",
+          "",
+          "For accurate readings, ensure the sensors, marked by a small bulge on the inner side of the ring emitting green lights, are facing the inner side of your palm.",
+          "",
+          "Could you share a close-up image of the sensors on the ring? This would be the area with the small bump on the inner side of the ring."
+        ],
+        "conditions": {
+          "conditionText": "If fit is correct",
+          "ifTrue": "step-2",
+          "ifFalse": "resolution-fit"
+        }
+      },
+      {
+        "id": "resolution-fit",
+        "stepNumber": 0,
+        "title": "Adjust Fit",
+        "description": "User needs to adjust ring fit",
+        "resolution": "Issue resolved after adjusting ring fit",
+        "instructions": [
+          "Guide user on proper fit and observe for improvement"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Firmware Update + OMS Check",
+        "macroName": "Pushto_Zephyr",
+        "description": "Check firmware version, upgrade to latest, and check OMS on dashboard",
+        "instructions": [
+          "I have pushed the latest firmware to your ring.",
+          "Please quit the app completely, and reopen the app in a while.",
+          "If you don't see the Firmware Update pop-up, it should appear within the next few hours.",
+          "If it doesn't, please head to ring battery view > scroll down > 'check for firmware update'.",
+          "Once your firmware has been updated, please observe for a while.",
+          "",
+          "\ud83d\udcca BACKEND CHECK: Check OMS (OOB Movement Stats) on the Ring Dashboard",
+          "\u2022 This provides diagnostic data about movement tracking performance",
+          "\u2022 Look for patterns in step count discrepancies"
+        ],
+        "conditions": {
+          "conditionText": "If movement tracking improves",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-3"
+        }
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Check Discrepancy Scale",
+        "description": "Compare with other wearables and communicate expected behavior",
+        "resolution": "Communicated expected behavior or flagged for firmware improvement",
+        "instructions": [
+          "\ud83d\udccf ASSESSING DISCREPANCY SCALE:",
+          "",
+          "If comparing with another wearable and the difference is under 10%:",
+          "\u2192 Inform user that each wearable tracks step data according to its algorithm",
+          "\u2192 10% difference is within the margin of error and is expected",
+          "",
+          "If step count is significantly off:",
+          "\u2192 Check for fit and update firmware + soft reset on backend",
+          "\u2192 Ask user to observe for another day after reset",
+          "",
+          "If step count does not improve after all troubleshooting:",
+          "\u2192 Inform user this will be improved in upcoming firmware updates",
+          "\u2192 Flag to tech team for investigation if issue is severe"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "Movement tracking is now accurate",
+        "resolution": "Issue resolved - Movement tracking normalized",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Incorrect Sleep Data",
+    "caseIdentifier": "The user may face: 1) The sleep index is missing for the day, or 2) The sleep has been incorrectly detected by the ring.",
+    "description": "Troubleshooting flow for sleep tracking issues. Use Sleep Diagnosis dashboard for backend checks.",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-0",
+        "stepNumber": 1,
+        "title": "Ring Fit & Firmware Check",
+        "macroName": "Pushto_Zephyr",
+        "description": "Check ring fit and orientation, then push latest firmware",
+        "instructions": [
+          "1. Ring Fit & Orientation",
+          "2. Push Latest Firmware",
+          "3. Observe",
+          "",
+          "Applies to both: No sleep data at all, and Partial sleep data or missing sleep data chunks.",
+          "",
+          "STEP 1 \u2014 CHECK RING FIT & ORIENTATION:",
+          "Confirm the ring fits snugly on the index, middle, or ring finger (not too tight or too loose).",
+          "Ensure the sensors (small bulge on the inner side emitting green lights) face the inner side of the palm.",
+          "Ask for a close-up image of the sensors on the ring.",
+          "",
+          "STEP 2 \u2014 PUSH LATEST FIRMWARE:",
+          "Push the latest firmware if ring is not already on the latest version.",
+          "Ask the user to observe for another sleep cycle after the update."
+        ],
+        "conditions": {
+          "conditionText": "Did ring fit adjustment and firmware update resolve the issue?",
+          "ifTrue": "resolution-success-1",
+          "ifFalse": "step-sleep-diag"
+        }
+      },
+      {
+        "id": "step-sleep-diag",
+        "stepNumber": 2,
+        "title": "Sleep Diagnosis Check",
+        "description": "Check sleep diagnosis for HR and motion data \u2014 three main scenarios",
+        "instructions": [
+          "1. Check Sleep Diagnosis",
+          "2. Identify Scenario",
+          "3. Apply Fix",
+          "",
+          "SCENARIO A \u2014 No data on dashboard at all:",
+          "\u2192 Follow the 'Ring Data Not Uploading' SOP flow.",
+          "",
+          "SCENARIO B \u2014 Likely Fit Issue:",
+          "Ring dashboard shows expected HR graph but Sleep diagnosis dashboard shows high motion or missing HR data.",
+          "\u2192 Push a Soft Reset to the user.",
+          "\u2192 Ask them to swap finger and observe for 24 hours.",
+          "",
+          "SCENARIO C \u2014 Likely Sensor Issue:",
+          "Ring Dashboard: Ring State 10, missing HR data and/or missing temp data. Sleep diagnosis dashboard shows missing data.",
+          "\u2192 Try a Factory Reset and also ask them to swap finger and observe for 24 hours.",
+          "Factory Reset: Ring Battery View > scroll down > Factory Reset > follow the prompts."
+        ],
+        "conditions": {
+          "conditionText": "Did the sleep data normalize after applying the fix?",
+          "ifTrue": "resolution-success-2",
+          "ifFalse": "step-flag-tech"
+        }
+      },
+      {
+        "id": "step-flag-tech",
+        "stepNumber": 3,
+        "title": "Flag to Tech",
+        "description": "Issue persists \u2014 escalate to tech team for investigation",
+        "resolution": "Issue persists, escalated to tech",
+        "instructions": [
+          "Issue persists, flag to tech.",
+          "Provide all diagnostic data:",
+          "\u2022 Ring Dashboard screenshots",
+          "\u2022 Sleep Diagnosis data",
+          "\u2022 Firmware version",
+          "\u2022 Reset history"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success-1",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "Sleep data normalized after fit check and firmware update",
+        "resolution": "",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success-2",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "Sleep data normalized after diagnosis fix",
+        "resolution": "",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ring Data Not Uploading",
+    "caseIdentifier": "User can't see their data or metrics in the app. HR and skin temperature data do not appear on the homepage even though the ring is connected.",
+    "description": "Troubleshooting flow for data sync issues. Applies to both HR present and HR absent (likely sensor issue) cases.",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-0",
+        "stepNumber": 1,
+        "title": "Firmware Update & Observe",
+        "macroName": "Pushto_Zephyr",
+        "description": "Check HR/temp screenshot, update firmware, observe for 15 mins",
+        "instructions": [
+          "1. Check Screenshot",
+          "2. Update Firmware",
+          "3. Observe 15 mins",
+          "",
+          "Ask user to send a screenshot of the app home tab to check HR and temp data.",
+          "Applies to both: HR present and HR absent (likely sensor issue).",
+          "",
+          "Update firmware to latest version.",
+          "Ask user to observe for 15 mins for HR and skin temp to show up on the home tab.",
+          "User will let us know if they can see it on their app.",
+          "",
+          "If yes, all good \u2014 observe going forwards. (Old/lost data will not populate here.)"
+        ],
+        "conditions": {
+          "conditionText": "Can the user see HR and temp data after firmware update?",
+          "ifTrue": "resolution-success-1",
+          "ifFalse": "step-breathwork"
+        }
+      },
+      {
+        "id": "step-breathwork",
+        "stepNumber": 2,
+        "title": "Enable Breathwork/Workout Mode",
+        "macroName": "Zephyr_breathwork_workout",
+        "description": "Enable breathwork or workout mode for 30 seconds to trigger green light",
+        "instructions": [
+          "1. Enable Breathwork/Workout",
+          "2. Check for Green Light",
+          "3. Observe HR on Home Tab",
+          "",
+          "Ask the user to enable breathwork or workout mode for 30 seconds.",
+          "",
+          "YES \u2014 Green light observed:",
+          "Observe for HR showing up on home tab (15 mins).",
+          "If HR shows up within 15 mins \u2192 all good, observe going forwards. (Old/lost data will not populate here.)",
+          "If no HR shows up within 15 mins \u2192 proceed to Factory Reset.",
+          "",
+          "NO \u2014 No green light, no HR:",
+          "Proceed to Factory Reset."
+        ],
+        "conditions": {
+          "conditionText": "Is green light observed and HR showing up?",
+          "ifTrue": "resolution-success-2",
+          "ifFalse": "step-factory-reset"
+        }
+      },
+      {
+        "id": "step-factory-reset",
+        "stepNumber": 3,
+        "title": "Factory Reset",
+        "macroName": "Zephyr_New_FR",
+        "description": "Factory reset the ring and observe for 15 mins",
+        "instructions": [
+          "1. Factory Reset",
+          "2. Observe 15 mins",
+          "3. Check HR on Home Tab",
+          "",
+          "Factory reset (confirm on record indices) > observe for 15 mins.",
+          "Ring Battery View > scroll down > Factory Reset > follow the prompts.",
+          "Keep ring on charger until green LED light appears. Ring will disconnect from app (expected).",
+          "Once green light seen, remove from charger and reconnect.",
+          "",
+          "If HR shows up on home tab \u2192 all good, observe going forwards. (Old/lost data will not populate here.)",
+          "If HR does not show up \u2192 proceed to replacement."
+        ],
+        "conditions": {
+          "conditionText": "Does HR show up on home tab after factory reset?",
+          "ifTrue": "resolution-success-3",
+          "ifFalse": "step-replace"
+        }
+      },
+      {
+        "id": "step-replace",
+        "stepNumber": 4,
+        "title": "Replacement",
+        "description": "HR does not show up on home tab \u2014 replace based on Ring Dashboard diagnosis",
+        "resolution": "Initiate replacement",
+        "instructions": [
+          "HR does not show up on home tab after all steps.",
+          "",
+          "Check Ring Dashboard and tag accordingly:",
+          "\u2022 No HR in app + Ring State 10/HR9 PRESENT on Ring Dashboard \u2192 HR sensor issue replacement",
+          "\u2022 No HR in app + NO State 10/HR9 on Ring Dashboard \u2192 Data not uploading replacement"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success-1",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "HR and temp data showing after firmware update",
+        "resolution": "",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success-2",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "Green light observed and HR showing up",
+        "resolution": "",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success-3",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "HR showing up after factory reset",
+        "resolution": "",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ring Step 0 - No Steps Picked",
+    "caseIdentifier": "The user's step count does not update: No step data is reflected on the Movement Index.",
+    "description": "Troubleshooting flow for zero step count issues",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Check Firmware",
+        "macroName": "Pushto_Zephyr",
+        "description": "Verify if the Ring is on the latest firmware. If not, push the latest firmware update.",
+        "instructions": [
+          "I have pushed the latest firmware to your Ring.",
+          "Please quit the app completely and reopen it after a while.",
+          "If you don't see the firmware update pop-up immediately, it should appear within the next few hours.",
+          "If not, go to Ring Battery View > Scroll down > Tap 'Check for Firmware Update'.",
+          "Follow the prompts to complete the update.",
+          "Once updated, charge the Ring for 15 minutes. Observe its behavior for a couple of days."
+        ],
+        "conditions": {
+          "conditionText": "If steps start recording after firmware update",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-2"
+        }
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Soft Reset",
+        "macroName": "Soft_Rest",
+        "description": "Trigger a soft reset command from the backend",
+        "instructions": [
+          "We have triggered a soft reset for you from the backend.",
+          "Kindly close and reopen the app in a minute and observe the Ring's behavior."
+        ],
+        "conditions": {
+          "conditionText": "If steps start recording after soft reset",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-3"
+        }
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Factory Reset",
+        "macroName": "Zephyr_New_FR",
+        "description": "Perform a factory reset if soft reset doesn't work",
+        "instructions": [
+          "Please go ahead and factory reset your ring (Ring battery view > scroll down > factory reset > follow the prompts).",
+          "Once this is done, keep the ring on the charger, and you will notice a green LED light when the ring is placed on the charger.",
+          "At this point, the ring will disconnect from the phone, which is expected behavior.",
+          "Once you see the green light, remove the ring from the charger and connect the ring.",
+          "Video guide: https://youtu.be/2CzUj0l6kWo"
+        ],
+        "conditions": {
+          "conditionText": "If steps start recording after factory reset",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-4"
+        }
+      },
+      {
+        "id": "step-4",
+        "stepNumber": 4,
+        "title": "Replace Ring",
+        "description": "Replace the ring if issue persists",
+        "resolution": "Replace the ring",
+        "instructions": [
+          "Initiate ring replacement process",
+          "Tag as step tracking failure"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "Step tracking is now working",
+        "resolution": "Issue resolved - Steps now being recorded",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "HR Sensor Failure - Constant Red Light",
+    "caseIdentifier": "The ring has a constant red light flashing from the sensor.",
+    "description": "Troubleshooting flow for HR sensor failure with constant red light",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Factory Reset",
+        "macroName": "Zephyr_New_FR",
+        "description": "Factory reset the ring to resolve the constant red light issue",
+        "instructions": [
+          "Please go ahead and factory reset your ring (Ring battery view > scroll down > factory reset > follow the prompts).",
+          "Once this is done, keep the ring on the charger, and you will notice a green LED light when the ring is placed on the charger.",
+          "At this point, the ring will disconnect from the phone, which is expected behavior.",
+          "Once you see the green light, remove the ring from the charger and connect the ring.",
+          "Video guide: https://youtu.be/2CzUj0l6kWo",
+          "After this, your ring should get connected and you shouldn't face these issues."
+        ],
+        "conditions": {
+          "conditionText": "If red light issue is resolved",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-2"
+        }
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Replace Ring",
+        "description": "If the red light is still visible after factory reset, replace the ring",
+        "resolution": "Replace the ring due to HR sensor failure",
+        "instructions": [
+          "Initiate ring replacement process",
+          "Tag as HR sensor failure"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "HR sensor is now working correctly",
+        "resolution": "Issue resolved - Red light issue fixed",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ring Only Connects on Charger",
+    "caseIdentifier": "The ring connects to the app only when it is on the charger. Once removed from the charger, it disconnects.",
+    "description": "Troubleshooting flow for rings that only connect while charging",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-0",
+        "stepNumber": 1,
+        "title": "Check for Physical Damage",
+        "description": "Ask for ring images and check for battery bulges or damage near the sensor",
+        "instructions": [
+          "Request images of the ring from all angles",
+          "Check for any battery bulges or damage near the sensor area",
+          "If there is visible damage, replace the ring directly"
+        ],
+        "conditions": {
+          "conditionText": "If physical damage is visible",
+          "ifTrue": "resolution-damage",
+          "ifFalse": "step-1"
+        }
+      },
+      {
+        "id": "resolution-damage",
+        "stepNumber": 0,
+        "title": "Replace - Physical Damage",
+        "description": "Ring shows physical damage",
+        "resolution": "Replace the ring due to physical damage",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "step-1",
+        "stepNumber": 2,
+        "title": "Firmware Update",
+        "macroName": "Pushto_Zephyr",
+        "description": "If no damage, check firmware and update while keeping ring on charger",
+        "instructions": [
+          "I have pushed the latest firmware to your ring.",
+          "Please quit the app completely, and reopen the app in a while.",
+          "If you don't see the Firmware Update pop-up, it should appear within the next few hours.",
+          "If it doesn't, please head to ring battery view > scroll down > 'check for firmware update'.",
+          "Once it does, follow the prompts and update your firmware.",
+          "Keep the ring on the charger during the update process."
+        ],
+        "conditions": {
+          "conditionText": "If ring connects off charger after firmware update",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-2"
+        }
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 3,
+        "title": "Factory Reset",
+        "macroName": "Zephyr_New_FR",
+        "description": "Perform factory reset and observe",
+        "instructions": [
+          "Please go ahead and factory reset your ring (Ring battery view > scroll down > factory reset > follow the prompts).",
+          "Once this is done, keep the ring on the charger, and you will notice a green LED light when the ring is placed on the charger.",
+          "At this point, the ring will disconnect from the phone, which is expected behaviour.",
+          "Once you see the green light, remove the ring from the charger and connect the ring.",
+          "Video guide: https://youtu.be/2CzUj0l6kWo",
+          "Keep the Ring on the charger for 15 minutes after the reset.",
+          "After 15 minutes, observe the ring until the end of the day."
+        ],
+        "conditions": {
+          "conditionText": "If ring connects off charger after factory reset",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-3"
+        }
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 4,
+        "title": "Replace Ring",
+        "description": "Issue persists, replace the ring",
+        "resolution": "Replace the ring",
+        "instructions": [
+          "Initiate ring replacement process",
+          "Tag as connectivity/hardware failure"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "Ring now connects off the charger",
+        "resolution": "Issue resolved - Ring connecting normally",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ring Charger Issue",
+    "caseIdentifier": "The user's ring is not charging: The charging station does not show any lights when plugged in, or the charger does not blink the white charging light when the ring is placed on it.",
+    "description": "Troubleshooting flow for charger issues",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Charger Test",
+        "macroName": "Ring_Charger_Test",
+        "description": "A couple of quick checks to proceed ahead with the troubleshooting",
+        "instructions": [
+          "Please confirm the type of adapter that you are using with the charging dock (Brand name and whether it is a normal or fast charger). The adapter should be within 20 watts and less than 2 AMPS. Please attach images of the adapter for reference.",
+          "Have you tested the charging cable with other devices to confirm its functionality? If possible, try using a different cable to rule out cable issues.",
+          "When you switch on the charging dock without placing the ring on it, does the LED light turn purple?",
+          "When you place the ring on the charging dock, does the LED light on the dock change to a breathing white light? If not, please flip the ring and observe the LED colour."
+        ],
+        "conditions": {
+          "conditionText": "If charger shows white breathing light with ring",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-2"
+        }
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Replace Charger",
+        "description": "If the charger is not showing white breathing light after the ring is placed on it",
+        "resolution": "Replace the charger",
+        "instructions": [
+          "Initiate charger replacement process",
+          "Provide shipping details for new charger"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success",
+        "stepNumber": 0,
+        "title": "Charger Working",
+        "description": "Charger is functioning correctly",
+        "resolution": "Charger working correctly - may be a ring issue",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ring Frequent Disconnection",
+    "caseIdentifier": "The ring frequently disconnects from the app: There are episodes of the ring disconnecting and reconnecting intermittently at rapid intervals.",
+    "description": "Troubleshooting flow for frequent disconnection issues",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Check Firmware",
+        "macroName": "Pushto_Zephyr",
+        "description": "Verify if the Ring is on the latest firmware",
+        "instructions": [
+          "I have pushed the latest firmware to your ring.",
+          "Please quit the app completely and reopen the app in a while.",
+          "If you don't see the Firmware Update pop-up, it should appear within the next few hours.",
+          "If it doesn't, please head to ring battery view > scroll down > 'check for firmware update'.",
+          "Once it does, follow the prompts and update your firmware.",
+          "Once your firmware has been updated, please observe for a while."
+        ],
+        "conditions": {
+          "conditionText": "If disconnection issues stop after firmware update",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-2"
+        }
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Bluetooth Reset",
+        "macroName": "Frequent_RingDisconnection",
+        "description": "Toggle Bluetooth and restart phone",
+        "instructions": [
+          "Can you toggle your Bluetooth off and on, then restart your phone, and then check whether the ring is connecting?",
+          "Then let's keep it under observation for a few hours.",
+          "You can get back to me. I will be here to help you and keep this chat open.",
+          "Feel free to get back to me anytime\u2014I'll be here to assist you."
+        ],
+        "conditions": {
+          "conditionText": "If disconnection issues stop after Bluetooth reset",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-3"
+        }
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Replace Ring",
+        "description": "If issue still persists after all steps, replace the ring",
+        "resolution": "Replace the ring",
+        "instructions": [
+          "Initiate ring replacement process",
+          "Tag as frequent disconnection hardware issue"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "Ring is now staying connected",
+        "resolution": "Issue resolved - Connection stable",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ring State 10 - No Contact Detected",
+    "caseIdentifier": "The ring is not detecting any contact with the finger: The user's heart rate and skin temperature data do not appear on their homepage. Backend identifier: Ring state 10.",
+    "description": "Troubleshooting flow for no contact detection issues",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Ring Fit Check",
+        "macroName": "HR9_Incorrect_Sleep_TS1",
+        "description": "Check the fit of the ring to ensure sensors are oriented properly",
+        "instructions": [
+          "Can you confirm how the ring fits you? The ring can be worn on the index, middle, or ring finger and should fit snugly (not too tight or too loose).",
+          "To remove the ring, push from the bottom and slide it off.",
+          "For accurate readings, ensure the sensors, marked by a small bulge on the inner side of the ring emitting green lights, are facing the inner side of your palm.",
+          "Could you share a close-up image of the sensors on the ring? This would be the area with the small bump on the inner side of the ring."
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Firmware Update + Soft Reset",
+        "macroName": "Pushto_Zephyr",
+        "description": "Check firmware version, upgrade, and push a soft reset",
+        "instructions": [
+          "Check the firmware version and upgrade to the relevant version.",
+          "Push a soft reset from the backend.",
+          "Run all checks and observe for improvement."
+        ],
+        "conditions": {
+          "conditionText": "If contact is now being detected",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-3"
+        }
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Factory Reset",
+        "macroName": "Zephyr_New_FR",
+        "description": "Recommend a factory reset if issue persists",
+        "instructions": [
+          "Please go ahead and factory reset your ring (Ring battery view > scroll down > factory reset > follow the prompts).",
+          "Once this is done, keep the ring on the charger, and you will notice a green LED light when the ring is placed on the charger.",
+          "At this point, the ring will disconnect from the phone, which is expected behavior.",
+          "Once you see the green light, remove the ring from the charger and connect the ring.",
+          "Video guide: https://youtu.be/2CzUj0l6kWo"
+        ],
+        "conditions": {
+          "conditionText": "If contact is now being detected",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-4"
+        }
+      },
+      {
+        "id": "step-4",
+        "stepNumber": 4,
+        "title": "Workout Mode Test",
+        "macroName": "Zephyr_breathwork_workout",
+        "description": "Try enabling workout mode to test sensor",
+        "instructions": [
+          "Can you please try enabling the workout mode on the app for a few minutes and wait till your data populates?",
+          "This should fix the issue. You can then observe going forward - the data should sync fine.",
+          "Do let us know if your data doesn't populate here!"
+        ],
+        "conditions": {
+          "conditionText": "If data populates during workout mode",
+          "ifTrue": "resolution-success",
+          "ifFalse": "step-5"
+        }
+      },
+      {
+        "id": "step-5",
+        "stepNumber": 5,
+        "title": "Replace Ring",
+        "description": "If nothing works, replace the ring",
+        "resolution": "Replace the ring",
+        "instructions": [
+          "Initiate ring replacement process",
+          "Tag as State 10 / No contact detection failure"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-success",
+        "stepNumber": 0,
+        "title": "Issue Resolved",
+        "description": "Ring is now detecting contact properly",
+        "resolution": "Issue resolved - Contact detection working",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ring Not Charging",
+    "caseIdentifier": "The charger is working fine for the user, but the ring is not detecting the charge and picking up battery.",
+    "description": "Troubleshooting flow for rings not charging despite working charger",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Ring Charger Test",
+        "macroName": "Ring_charger_test",
+        "description": "Verify charger functionality",
+        "instructions": [
+          "Could you please confirm the type of adapter that you are using with the charging dock (Brand name and whether it is a normal or fast charger)? The adapter should be within 20 watts and less than 2 AMPS. Please attach images of the adapter for reference.",
+          "Have you tested the charging cable with other devices to confirm its functionality? If possible, try using a different cable to rule out cable issues.",
+          "When you switch on the charging dock without placing the ring on it, does the LED light turn purple?",
+          "When you place the ring on the charging dock, does the LED light on the dock change to a breathing white light? If not, please flip the ring and observe the LED colour."
+        ],
+        "conditions": {
+          "conditionText": "If charger is confirmed faulty",
+          "ifTrue": "resolution-charger",
+          "ifFalse": "step-2"
+        }
+      },
+      {
+        "id": "resolution-charger",
+        "stepNumber": 0,
+        "title": "Replace Charger",
+        "description": "Charger is faulty",
+        "resolution": "Replace the charger",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Check Ring Hardware",
+        "description": "Check for visible damage on the ring's hardware around sensors",
+        "instructions": [
+          "If the charger is confirmed to be working fine, ask the user to check for any visible damage on the ring around its sensors.",
+          "Request relevant images for further assessment."
+        ],
+        "conditions": {
+          "conditionText": "If hardware damage is observed",
+          "ifTrue": "resolution-damage",
+          "ifFalse": "resolution-battery"
+        }
+      },
+      {
+        "id": "resolution-damage",
+        "stepNumber": 0,
+        "title": "Replace Ring - Hardware Damage",
+        "description": "Visible hardware damage observed",
+        "resolution": "Replace the ring under 'hardware damage' reasoning",
+        "instructions": [],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-battery",
+        "stepNumber": 0,
+        "title": "Replace Ring - Battery Failure",
+        "description": "No visible damage but ring won't charge",
+        "resolution": "Replace the ring under 'battery failure' reasoning",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Damaged Ring Causing User Discomfort",
+    "caseIdentifier": "CRITICAL: Cases involving burns from overheating/electrical shocks, very tight ring causing finger swelling, allergic reactions, or any damaged ring causing user discomfort. Treat as HIGH PRIORITY - finger swelling from tight ring is a MEDICAL EMERGENCY.",
+    "description": "Critical safety SOP for handling damaged rings causing burns, shocks, tight fit, allergic reactions, or physical discomfort. Requires immediate escalation and empathetic handling.",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "CRITICAL: Assess Severity & Escalate",
+        "description": "Immediately identify if this is a medical emergency requiring urgent action",
+        "instructions": [
+          "\ud83d\udea8 TREAT AS CRITICAL - HIGH PRIORITY",
+          "Immediately loop in a lead and/or SME for guidance on per-case basis",
+          "SCENARIO A: Stuck Ring with Finger Swelling \u2192 MEDICAL EMERGENCY \u2192 Follow Step 2 immediately",
+          "SCENARIO B: Burns/Electrical Shocks \u2192 HIGH PRIORITY \u2192 Follow Step 3",
+          "SCENARIO C: Allergic Reaction/Rash \u2192 Follow Step 4",
+          "SCENARIO D: General Discomfort (non-emergency) \u2192 Follow Step 5",
+          "Always refer to Legal Template SOPs: https://docs.google.com/document/d/1rxxrgJzEnsGxGwuXb2porOufTqs5BKLv/edit",
+          "Loop in legal team if user mentions compensation, litigation, or settlement",
+          "\u26a0\ufe0f DO NOT proactively mention compensation/settlement terms yourself"
+        ],
+        "conditions": {
+          "conditionText": "Is this a stuck ring with finger swelling?",
+          "ifTrue": "step-2",
+          "ifFalse": "step-3"
+        }
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "MEDICAL EMERGENCY: Stuck Ring Protocol",
+        "description": "Immediate action required - finger swelling can lead to loss of finger if not handled immediately",
+        "instructions": [
+          "\ud83d\udea8 THIS IS A MEDICAL EMERGENCY - ACT IMMEDIATELY",
+          "Arrange an immediate callback if not already on call",
+          "Guide user to closest hospital to have ring cut off (Harrington Ortho cutter or similar device)",
+          "Proactively ask for user's location \u2192 Check closest specialty hospitals",
+          "Call hospital to confirm they have ring cutting equipment \u2192 Inform them patient is coming",
+          "STAY ON THE CALL with user to reassure them until they reach hospital if necessary",
+          "Tone: Extremely empathetic and reassuring AT ALL TIMES",
+          "If ring not yet stuck but feeling tight, suggest:",
+          "  - Use cold water and gentle soap, slowly twist and wiggle ring to remove",
+          "  - Raise hand above head to encourage blood drainage, apply ice to reduce swelling, then retry removal"
+        ]
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Burns/Electrical Shock Protocol",
+        "description": "Handle burn or shock cases with urgency and gather evidence",
+        "instructions": [
+          "Send template: 'Important Safety Notice \u2013 Please Stop Use'",
+          "Request user STOP using ring and charger immediately",
+          "Gather required evidence:",
+          "  - Clear, well-lit photos of ring (inside, outside, different angles - entirety of surface)",
+          "  - Exact or approximate date and time when incident occurred",
+          "  - Photos of the injury/burn",
+          "  - Medical note if available",
+          "  - Order number and serial number",
+          "Arrange for ring to be returned (RTO) in UNTOUCHED form after incident",
+          "Ring MUST be RTOd back to India for mech design team evaluation",
+          "Escalate to engineering team for immediate review",
+          "Once requirements fulfilled, escalate to legal team",
+          "Request user's patience empathetically while working on resolution"
+        ]
+      },
+      {
+        "id": "step-4",
+        "stepNumber": 4,
+        "title": "Allergic Reaction/Skin Rash Protocol",
+        "description": "Handle skin irritation cases with care and evidence collection",
+        "instructions": [
+          "Send template: 'We're Here to Help with Your Ultrahuman Ring Experience'",
+          "Request user STOP using device immediately",
+          "Gather evidence:",
+          "  - Brief description of what occurred",
+          "  - Photos of rash/irritation",
+          "  - Serial number of device",
+          "  - Date of purchase",
+          "  - Approximate date symptoms began in relation to product use",
+          "If medical attention required, request:",
+          "  - Copy of medical bill/documentation",
+          "  - Approximate date of incident",
+          "Forward case to specialist team for expert review",
+          "Escalate for internal evaluation",
+          "Send follow-up template: 'Follow-Up on Your Ring Concern'"
+        ]
+      },
+      {
+        "id": "step-5",
+        "stepNumber": 5,
+        "title": "General Discomfort (Non-Emergency)",
+        "description": "Handle non-critical discomfort cases",
+        "instructions": [
+          "Empathize with user's concern",
+          "Request photos and description of discomfort",
+          "Assess if size/fit issue \u2192 Offer sizing exchange if within return period",
+          "Check if engraving issue \u2192 Follow engraving SOP",
+          "If physical damage to ring \u2192 Request RTO for evaluation",
+          "Offer standard resolution: replacement or refund based on assessment"
+        ]
+      },
+      {
+        "id": "step-6",
+        "stepNumber": 6,
+        "title": "Post-Emergency Resolution",
+        "description": "After immediate medical treatment or urgent handling",
+        "instructions": [
+          "Offer IMMEDIATE refund or replacement based on customer preference",
+          "Offer reimbursement of any hospital/medical bills paid for injury treatment/ring removal",
+          "Schedule at least 2 follow-ups:",
+          "  - Day after incident",
+          "  - 2 days after that",
+          "  - Additional follow-ups based on severity",
+          "Consider sending delight/merchandise based on case and situation",
+          "Ensure all communications maintain extremely empathetic and reassuring tone"
+        ],
+        "conditions": {
+          "conditionText": "Was defect confirmed in ring?",
+          "ifTrue": "step-8",
+          "ifFalse": "step-9"
+        }
+      },
+      {
+        "id": "step-7",
+        "stepNumber": 7,
+        "title": "Medical Evaluation - Allergic Reaction",
+        "description": "Determine if product defect exists or goodwill resolution needed",
+        "instructions": [
+          "Await specialist team evaluation results",
+          "Review medical documentation if provided",
+          "Assess if product fault identified"
+        ],
+        "conditions": {
+          "conditionText": "Was product defect confirmed?",
+          "ifTrue": "step-8",
+          "ifFalse": "step-9"
+        }
+      },
+      {
+        "id": "step-8",
+        "stepNumber": 8,
+        "title": "Defect Confirmed - Full Resolution",
+        "description": "Product fault identified, provide comprehensive resolution",
+        "resolution": "Full resolution: Medical reimbursement + refund/replacement + settlement documentation",
+        "instructions": [
+          "Send template: 'Product Assessment \u2013 Resolution Details' or 'Reimbursement and Support'",
+          "Offer:",
+          "  - Reimbursement of documented medical expenses",
+          "  - Refund OR replacement ring (customer choice)",
+          "  - Prepaid return label if customer wishes to send product for review",
+          "Check with legal before dispatching settlement agreement",
+          "May share brief settlement confirmation to document resolution",
+          "Close case with empathy and care"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "step-9",
+        "stepNumber": 9,
+        "title": "No Defect Found - Goodwill Resolution",
+        "description": "Evaluation found no product defect, offer goodwill gesture",
+        "resolution": "Goodwill resolution: Medical reimbursement + refund/replacement (no defect confirmed)",
+        "instructions": [
+          "Send template: 'Resolution Offer Regarding Your Ultrahuman Ring' or 'Assessment Outcome'",
+          "For rash/burn cases: 'Evaluation did not identify product defect or safety issue'",
+          "Offer as goodwill gesture:",
+          "  - One-time reimbursement of documented out-of-pocket medical expenses",
+          "  - Refund OR replacement ring (customer preference)",
+          "For shock cases with no fault:",
+          "  - Send new charger as courtesy",
+          "  - Extend warranty by 6 months",
+          "May share short acknowledgment form to complete process",
+          "Ensure resolution closes matter respectfully"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-standard",
+        "stepNumber": 0,
+        "title": "Standard Resolution",
+        "description": "Non-critical case resolved with standard process",
+        "resolution": "Resolved via standard replacement or refund process",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "User Data Migration Between Accounts",
+    "caseIdentifier": "User wants to transfer all their app data (from Ring or M1) from an old email ID (Account A) to a new email ID (Account B). This includes in-app email change requests.",
+    "description": "Complete process for migrating user data between accounts, handling email changes, Apple Private Relay IDs, and platform switches (iOS to Android).",
+    "category": "account-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Collect Account Information",
+        "macroName": "Email_Migration_Request",
+        "description": "Request both email IDs and reason for transfer",
+        "instructions": [
+          "Ask user to share:",
+          "  \u2022 Account A - Current account that holds the data (may be the account they're contacting from on Kustomer)",
+          "  \u2022 Account B - New email ID they want to move data to",
+          "  \u2022 Reason for the transfer",
+          "",
+          "Template Response:",
+          "\u27a1\ufe0f Please confirm the email address currently linked to your data, along with the new email ID you'd like to move your data to.",
+          "",
+          "If reason not provided, add:",
+          "Also, do let us know the reason for the email change. For example, are you switching devices (like moving from iOS to Android), or is it simply a personal preference? This helps us ensure everything goes smoothly and nothing gets missed."
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Verify Account B Status",
+        "description": "Check if Account B exists and has any data",
+        "instructions": [
+          "Search the dashboard to verify Account B status:",
+          "  \u2022 Internal > Users (for general account info)",
+          "  \u2022 Ring Data > Ring Dashboards (for Ring data)",
+          "  \u2022 Internal > CGM Stints (for M1 data)",
+          "",
+          "Check if Account B:",
+          "  1. Already exists in system",
+          "  2. Has any data or activity (login history, device pairing, etc.)",
+          "",
+          "IMPORTANT: Check for Apple Private Relay IDs (emails ending in @privaterelay.appleid.com)"
+        ],
+        "conditions": {
+          "conditionText": "Does Account B exist with data?",
+          "ifTrue": "step-3",
+          "ifFalse": "step-4-check"
+        }
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Request Account B Deletion",
+        "description": "Account B has existing data - user must delete it first",
+        "instructions": [
+          "\u26a0\ufe0f Account B already has data - must be deleted before migration",
+          "",
+          "Send template:",
+          "\u27a1\ufe0f It looks like your new email (Account B) is already linked to an existing account with some data. In order to move your data from your old account, we'll need you to delete this new account first.",
+          "",
+          "Please log in to the app using Account B, head to Profile \u2192 Settings \u2192 Delete Account. Once this is done, log in using Account A and let us know.",
+          "",
+          "Please note that any data linked to this account will be permanently lost, so do proceed only if that's okay.",
+          "",
+          "Wait for user confirmation of deletion before proceeding to Step 4"
+        ]
+      },
+      {
+        "id": "step-4-check",
+        "stepNumber": 0,
+        "title": "Check for No-Data Scenario",
+        "description": "Verify if Account A has any data before proceeding",
+        "instructions": [
+          "Before raising migration request, check if Account A has ANY data:",
+          "  \u2022 Device paired?",
+          "  \u2022 Metrics generated?",
+          "  \u2022 Any activity history?",
+          "",
+          "If NO data exists on Account A \u2192 Go to 'no-data-resolution'",
+          "If data exists \u2192 Proceed to Step 4"
+        ],
+        "conditions": {
+          "conditionText": "Does Account A have any data?",
+          "ifTrue": "step-4",
+          "ifFalse": "no-data-resolution"
+        }
+      },
+      {
+        "id": "step-4",
+        "stepNumber": 4,
+        "title": "Raise Data Transfer Request",
+        "description": "Submit migration request to cx-datatransfer team",
+        "instructions": [
+          "\u2705 Confirm prerequisites met:",
+          "  \u2022 Account A (source) and Account B (target) email IDs received",
+          "  \u2022 Account B is either deleted OR never used",
+          "",
+          "Raise request to @cx-datatransfer team on cx-data-transfer-requests channel",
+          "Fill the data-transfer-form with required details",
+          "",
+          "Template for flagging:",
+          "\u27a1\ufe0f @cxdatatransfer User has requested data transfer from Account A (old@email.com) to Account B (new@email.com)."
+        ]
+      },
+      {
+        "id": "step-5",
+        "stepNumber": 5,
+        "title": "Confirm Migration Complete",
+        "description": "Notify user after successful data transfer",
+        "resolution": "Data successfully migrated to new email account",
+        "instructions": [
+          "Once cx-datatransfer team confirms completion, send:",
+          "",
+          "\u27a1\ufe0f Your data has now been successfully moved to your new email ID. You can now log in to the app using this email and access all your previous data.",
+          "",
+          "Verify user can successfully log in and access their data",
+          "Close the ticket"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "no-data-resolution",
+        "stepNumber": 0,
+        "title": "No Data - Simple Re-login",
+        "description": "Account has no data, no migration needed",
+        "resolution": "No migration needed - user re-logged with preferred email",
+        "instructions": [
+          "If user has just signed up with no data linked (no device paired, no metrics):",
+          "No need to raise data migration request",
+          "",
+          "Send template:",
+          "\u27a1\ufe0f Since there's no data associated with your current account yet, you can just log out and log back in using your preferred email. That'll set things up exactly how you need \u2014 no data will be lost.",
+          "",
+          "User simply logs out and logs back in with preferred email"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "apple-relay-info",
+        "stepNumber": 0,
+        "title": "Apple Private Relay Email Guidance",
+        "description": "Handle Apple Private Relay IDs (@privaterelay.appleid.com)",
+        "resolution": "Guided user on Apple Private Relay ID usage",
+        "instructions": [
+          "\u2139\ufe0f Apple Private Relay emails end in @privaterelay.appleid.com",
+          "This is a masked, Apple-generated email forwarding to actual Apple ID",
+          "Works normally within Apple ecosystem - no action needed unless switching platforms",
+          "",
+          "Template for general info:",
+          "\u27a1\ufe0f Your account is linked to an Apple Private Relay ID \u2014 this is just a masked version of your Apple email and works normally within the Apple ecosystem.",
+          "",
+          "There's no need to migrate your data unless you're planning to switch to an Android device. In that case, we recommend moving your data to a regular email ID (like Gmail) to avoid any login or access issues outside of Apple's system.",
+          "",
+          "If switching iOS \u2192 Android: Treat as standard Account A \u2192 Account B transfer"
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ultrahuman Home: The Future of Healthy Living",
+    "caseIdentifier": "Questions about Ultrahuman Home device - purchase, shipping, features, sensors, biomarkers, setup, integrations, and troubleshooting.",
+    "description": "Comprehensive FAQ covering all aspects of Ultrahuman Home including availability, specifications, features, and usage guidance.",
+    "category": "ultrahuman-home",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Purchase & Shipping Information",
+        "description": "Handle questions about buying and receiving Ultrahuman Home",
+        "instructions": [
+          "\ud83d\udccd WHERE TO BUY:",
+          "\u2022 Ultrahuman Home can be purchased via our website",
+          "\u2022 Now available for purchase on our website",
+          "",
+          "\ud83d\udce6 SHIPPING:",
+          "\u2022 Ships within 5-7 business days",
+          "\u2022 May be subject to taxes, customs duties, and fees (borne by recipient)",
+          "",
+          "\ud83d\udccb RETURN POLICY:",
+          "\u2022 30-day return policy",
+          "\u2022 12-month warranty covering electronics and sensors (excluding mechanical damage)",
+          "",
+          "\ud83d\udce6 UNBOXING:",
+          "\u2022 Ultrahuman Home device",
+          "\u2022 USB-C cable for power",
+          "\u2022 Notecard with message",
+          "\u2022 Product information brochure"
+        ],
+        "conditions": {
+          "conditionText": "Is this a technical/feature question?",
+          "ifTrue": "step-2",
+          "ifFalse": "resolution-purchase-info"
+        }
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Product Specifications & Design",
+        "description": "Provide technical specifications and design details",
+        "instructions": [
+          "\ud83c\udfa8 DESIGN & BUILD:",
+          "\u2022 Made from anodized aluminum",
+          "\u2022 Available in single color variant",
+          "\u2022 Single variant with optional microphone (can be switched off)",
+          "\u2022 Expected lifespan: Industry-grade sensors, built for years of reliable performance",
+          "",
+          "\u26a1 POWER & CONNECTIVITY:",
+          "\u2022 Power consumption: 2 Watts",
+          "\u2022 No calibration period required",
+          "\u2022 iOS 15+ or Android 6+ required",
+          "\u2022 Wi-Fi range: up to 20 feet",
+          "\u2022 Bluetooth range: up to 8 feet",
+          "",
+          "\ud83d\udd12 PRIVACY & SAFETY:",
+          "\u2022 No camera (uses Infrared sensor)",
+          "\u2022 Local audio processing",
+          "\u2022 Physical mic cut-off button",
+          "\u2022 Standard EMF emission (comparable to TV/Wi-Fi device)",
+          "\u2022 Safe for pregnant women and children"
+        ],
+        "conditions": {
+          "conditionText": "Is this about sensors or biomarkers?",
+          "ifTrue": "step-3",
+          "ifFalse": "step-4"
+        }
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Sensors & Biomarkers",
+        "description": "Explain sensor capabilities and biomarker measurements",
+        "instructions": [
+          "\ud83d\udd2c SENSORS INCLUDED:",
+          "\u2022 Temperature sensors (room temperature)",
+          "\u2022 Humidity sensors (moisture levels)",
+          "\u2022 Particulate matter sensors (air quality - PM1, PM2.5, PM10)",
+          "\u2022 Precision microphones (noise levels, sleep disturbances)",
+          "\u2022 Natural light sensors (Vitamin D levels, UV)",
+          "\u2022 Blue light sensors (circadian rhythm impact)",
+          "\u2022 CO & CO2 monitors",
+          "\u2022 Infrared sensor (temperature mapping, no camera)",
+          "",
+          "\ud83d\udcca BIOMARKERS MEASURED:",
+          "\u2022 Temperature, humidity, particulate matter",
+          "\u2022 Noise levels, smoke levels",
+          "\u2022 Blue light levels, UV light levels",
+          "\u2022 Real-time continuous sampling",
+          "\u2022 Highly accurate (calibrated against industry standards)",
+          "",
+          "\ud83c\udfe0 COVERAGE:",
+          "\u2022 Single device covers ~500 square feet",
+          "\u2022 Can install multiple devices for larger homes",
+          "\u2022 App consolidates locations into 'Ultraspace'"
+        ]
+      },
+      {
+        "id": "step-4",
+        "stepNumber": 4,
+        "title": "Features & Health Benefits",
+        "description": "Explain specific health monitoring features",
+        "instructions": [
+          "\u2600\ufe0f SUNLIGHT MONITORING:",
+          "\u2022 Photo-detecting sensors monitor UVA, UVB, UVC",
+          "\u2022 Track sunlight exposure throughout the day",
+          "",
+          "\ud83d\udd35 BLUE LIGHT MANAGEMENT:",
+          "\u2022 Blue light exposure sensors",
+          "\u2022 Insights into circadian rhythm impact",
+          "\u2022 Sleep-wake cycle optimization",
+          "",
+          "\ud83d\udd0a NOISE DETECTION:",
+          "\u2022 Optimize sleep quality by monitoring noise levels",
+          "\u2022 Detect optimal noise bands for day/night",
+          "\u2022 Snore detection for sleep apnea indicators",
+          "",
+          "\ud83c\udf21\ufe0f TEMPERATURE TRACKING:",
+          "\u2022 Monitor room temperature fluctuations",
+          "\u2022 Optimize bedroom temperature for sleep",
+          "\u2022 Body cooling correlation for better REM sleep",
+          "",
+          "\ud83d\udca8 AIR QUALITY:",
+          "\u2022 Detect pollen, particulate matter, CO/CO2",
+          "\u2022 Real-time alerts for poor air quality",
+          "\u2022 Long-term respiratory health improvement"
+        ]
+      },
+      {
+        "id": "step-5",
+        "stepNumber": 5,
+        "title": "Setup & Usage Guidance",
+        "description": "Provide optimal setup and usage recommendations",
+        "resolution": "Comprehensive Ultrahuman Home information provided",
+        "instructions": [
+          "\ud83d\udccd OPTIMAL PLACEMENT:",
+          "\u2022 Recommended: Bedroom & spaces where you spend most time",
+          "\u2022 Best results: Bedside table placement",
+          "\u2022 Allows tracking of UV light, temperature, air quality + sleep sounds",
+          "",
+          "\ud83d\udc65 MULTI-USER ACCESS:",
+          "\u2022 Up to 10 people can access data simultaneously (cloud sharing)",
+          "\u2022 Only 1 user can connect for settings/diagnostics at a time",
+          "",
+          "\ud83d\udcf1 DATA & INTEGRATIONS:",
+          "\u2022 Data stored for 15 days on device",
+          "\u2022 Cloud backup available",
+          "\u2022 Export data feature (available via software update Q3 2024)",
+          "\u2022 Apple HomeKit compatible",
+          "\u2022 Thread protocol support",
+          "\u2022 IFTTT integration (Google Home, Apple Home, Amazon Alexa)",
+          "",
+          "\u2708\ufe0f AIRPLANE MODE:",
+          "\u2022 Can disable Wi-Fi/Bluetooth",
+          "\u2022 Continues tracking, syncs when mode disabled",
+          "",
+          "\ud83d\udd2e UPCOMING FEATURES:",
+          "\u2022 Smoke detection (CO/CO2 increase alerts) - end of year",
+          "\u2022 Data export feature - Q3 2024"
+        ],
+        "isEndStep": true
+      },
+      {
+        "id": "resolution-purchase-info",
+        "stepNumber": 0,
+        "title": "Purchase Information Provided",
+        "description": "User received purchase and shipping details",
+        "resolution": "Purchase, shipping, and return policy information provided",
+        "instructions": [],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "User Data Migration Between Accounts",
+    "caseIdentifier": "User wants to transfer all their app data (from Ring or M1) from an old email ID (Account A) to a new email ID (Account B). This includes in-app email change requests.",
+    "description": "Complete process for migrating user data between accounts, handling email changes, Apple Private Relay IDs, and platform switches (iOS to Android).",
+    "category": "account-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Collect Account Information",
+        "macroName": "Email_Migration_Request",
+        "description": "Request both email IDs and reason for transfer",
+        "instructions": [
+          "Ask user to share:",
+          "  \u2022 Account A - Current account that holds the data (may be the account they're contacting from on Kustomer)",
+          "  \u2022 Account B - New email ID they want to move data to",
+          "  \u2022 Reason for the transfer",
+          "",
+          "Template Response:",
+          "\u27a1\ufe0f Please confirm the email address currently linked to your data, along with the new email ID you'd like to move your data to.",
+          "",
+          "If reason not provided, add:",
+          "Also, do let us know the reason for the email change. For example, are you switching devices (like moving from iOS to Android), or is it simply a personal preference? This helps us ensure everything goes smoothly and nothing gets missed."
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Verify Account B Status",
+        "description": "Check if Account B exists and has any data",
+        "instructions": [
+          "Search the dashboard to verify Account B status:",
+          "  \u2022 Internal > Users (for general account info)",
+          "  \u2022 Ring Data > Ring Dashboards (for Ring data)",
+          "  \u2022 Internal > CGM Stints (for M1 data)",
+          "",
+          "Check if Account B:",
+          "  1. Already exists in system",
+          "  2. Has any data or activity (login history, device pairing, etc.)",
+          "",
+          "IMPORTANT: Check for Apple Private Relay IDs (emails ending in @privaterelay.appleid.com)"
+        ],
+        "conditions": {
+          "conditionText": "Does Account B exist with data?",
+          "ifTrue": "step-3",
+          "ifFalse": "step-4-check"
+        }
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Request Account B Deletion",
+        "description": "Account B has existing data - user must delete it first",
+        "instructions": [
+          "\u26a0\ufe0f Account B already has data - must be deleted before migration",
+          "",
+          "Send template:",
+          "\u27a1\ufe0f It looks like your new email (Account B) is already linked to an existing account with some data. In order to move your data from your old account, we'll need you to delete this new account first.",
+          "",
+          "Please log in to the app using Account B, head to Profile \u2192 Settings \u2192 Delete Account. Once this is done, log in using Account A and let us know.",
+          "",
+          "Please note that any data linked to this account will be permanently lost, so do proceed only if that's okay.",
+          "",
+          "Wait for user confirmation of deletion before proceeding to Step 4"
+        ]
+      },
+      {
+        "id": "step-4",
+        "stepNumber": 4,
+        "title": "Raise Data Transfer Request",
+        "description": "Submit migration request to cx-datatransfer team",
+        "instructions": [
+          "\u2705 Confirm prerequisites met:",
+          "  \u2022 Account A (source) and Account B (target) email IDs received",
+          "  \u2022 Account B is either deleted OR never used",
+          "",
+          "Raise request to @cx-datatransfer team on cx-data-transfer-requests channel",
+          "Fill the data-transfer-form with required details",
+          "",
+          "Template for flagging:",
+          "\u27a1\ufe0f @cxdatatransfer User has requested data transfer from Account A (old@email.com) to Account B (new@email.com)."
+        ]
+      },
+      {
+        "id": "step-5",
+        "stepNumber": 5,
+        "title": "Confirm Migration Complete",
+        "description": "Notify user after successful data transfer",
+        "resolution": "Data successfully migrated to new email account",
+        "instructions": [
+          "Once cx-datatransfer team confirms completion, send:",
+          "",
+          "\u27a1\ufe0f Your data has now been successfully moved to your new email ID. You can now log in to the app using this email and access all your previous data.",
+          "",
+          "Verify user can successfully log in and access their data",
+          "Close the ticket"
+        ],
+        "isEndStep": true
+      }
+    ]
+  }
+]
