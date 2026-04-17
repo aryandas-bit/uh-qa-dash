@@ -1,5 +1,6 @@
 const GROQ_API_BASE = 'https://api.groq.com/openai/v1';
-const GROQ_MODEL = 'mixtral-8x7b-32768';
+// Use fastest available Groq models (mixtral-8x7b and llama-3.1 support tool use)
+const GROQ_MODELS = ['mixtral-8x7b-32768', 'llama-3.1-70b-versatile', 'llama-3.1-8b-instant'];
 const GROQ_TIMEOUT_MS = 15000;
 
 export interface QuickAnalysis {
@@ -46,55 +47,69 @@ export async function analyzeQuick(
     .replace('{agentLatest}', truncateText(lastAgentMessage, 200))
     .replace('{turnCount}', String(totalTurns));
 
-  try {
-    const response = await fetch(`${GROQ_API_BASE}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        max_tokens: 256,
-      }),
-      signal: AbortSignal.timeout(GROQ_TIMEOUT_MS),
-    });
+  // Try models in order until one succeeds
+  for (const model of GROQ_MODELS) {
+    try {
+      const response = await fetch(`${GROQ_API_BASE}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.3,
+          max_tokens: 256,
+        }),
+        signal: AbortSignal.timeout(GROQ_TIMEOUT_MS),
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[Groq Quick] ${response.status} error:`, errorText);
-      throw new Error(`Groq API ${response.status}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        const statusCode = response.status;
+        console.warn(`[Groq Quick] Model ${model} ${statusCode}, trying next...`, errorText.substring(0, 100));
+
+        // 404 or 410 means model not available, try next one
+        if (statusCode === 404 || statusCode === 410 || (statusCode === 400 && errorText.includes('decommissioned'))) {
+          continue;
+        }
+        // For other errors, fail immediately
+        throw new Error(`Groq API ${statusCode}`);
+      }
+
+      const data = await response.json() as any;
+      const content = data.choices?.[0]?.message?.content;
+      if (!content) {
+        throw new Error('Empty response from Groq');
+      }
+
+      // Parse JSON from response (may have markdown wrapping)
+      let jsonStr = content.trim();
+      if (jsonStr.startsWith('```json')) jsonStr = jsonStr.slice(7);
+      if (jsonStr.startsWith('```')) jsonStr = jsonStr.slice(3);
+      if (jsonStr.endsWith('```')) jsonStr = jsonStr.slice(0, -3);
+
+      const parsed = JSON.parse(jsonStr.trim()) as QuickAnalysis;
+      parsed.analyzeTime = Date.now() - startTime;
+
+      console.log(`[Groq Quick] ticket=${ticketId} model=${model} success in ${parsed.analyzeTime}ms`);
+      return parsed;
+    } catch (error) {
+      console.warn(`[Groq Quick] Model ${model} failed:`, (error as Error).message);
+      // Continue to next model
     }
-
-    const data = await response.json() as any;
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) {
-      throw new Error('Empty response from Groq');
-    }
-
-    // Parse JSON from response (may have markdown wrapping)
-    let jsonStr = content.trim();
-    if (jsonStr.startsWith('```json')) jsonStr = jsonStr.slice(7);
-    if (jsonStr.startsWith('```')) jsonStr = jsonStr.slice(3);
-    if (jsonStr.endsWith('```')) jsonStr = jsonStr.slice(0, -3);
-
-    const parsed = JSON.parse(jsonStr.trim()) as QuickAnalysis;
-    parsed.analyzeTime = Date.now() - startTime;
-
-    return parsed;
-  } catch (error) {
-    console.error(`[Groq Quick] ticket=${ticketId} error:`, error);
-    // Return safe defaults on error
-    return {
-      sentiment: 'neutral',
-      priority: 'standard',
-      hasError: false,
-      issueCategory: 'other',
-      analyzeTime: Date.now() - startTime,
-    };
   }
+
+  // All models failed — return safe defaults
+  console.error(`[Groq Quick] ticket=${ticketId} all models failed`);
+  return {
+    sentiment: 'neutral',
+    priority: 'standard',
+    hasError: false,
+    issueCategory: 'other',
+    analyzeTime: Date.now() - startTime,
+  };
 }
 
 function truncateText(text: string, maxLength: number): string {
