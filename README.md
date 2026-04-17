@@ -170,6 +170,8 @@ The backend requires its own runtime, environment variables, and access to the d
 - `backend/.env`, service-account JSON files, and database assets should stay out of version control.
 - Production behavior depends on valid data paths, provider keys, and Google API credentials.
 
+Built By Aryan & Sunny
+
 ## License
 
 This repository is private/internal unless a license file is added explicitly.
