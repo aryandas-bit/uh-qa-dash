@@ -2,10 +2,9 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "cd frontend && npm install && npm run build",
   "outputDirectory": "frontend/dist",
-  "experimentalServices": {
-    "api": {
-      "maxDuration": 60,
-      "routePrefix": "/api"
+  "functions": {
+    "api/index.ts": {
+      "maxDuration": 60
     }
   },
   "rewrites": [
