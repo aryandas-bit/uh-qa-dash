@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { analyzeTicket, batchAnalyze, CustomerTicketHistory } from '../services/gemini.service.js';
+import { analyzeHybrid } from '../services/analysis-hybrid.service.js';
 import { getTicketById, getFlaggedTickets, getAgentTickets, getTicketsByIds, getCustomerHistory, getRelevantAuditMemories, saveAuditMemory, AuditMemoryRecord, TicketRow, saveQAReview, getQAReview, deleteQAReview, getQAReviewsBulk, getAllQAReviews, getAllQAReviewsWithTickets, saveTicketAnalysis, getStoredTicketAnalysis, saveQAScore, getQAScoresBulk } from '../services/database.service.js';
 import { upsertReviewToSheet, deleteReviewFromSheet } from '../services/sheets.service.js';
 import { getAllSOPs, getSOPCategories } from '../services/sop.service.js';
@@ -99,6 +100,52 @@ function buildResolutionNotes(analysis: any): string | null {
   return analysis?.resolution?.abandonmentDetails || analysis?.summary || null;
 }
 
+interface ParsedMessage {
+  sender: 'CUSTOMER' | 'AGENT' | 'BOT' | 'INTERNAL_NOTE' | 'UNKNOWN';
+  content: string;
+}
+
+function parseMessages(messagesJson: string): ParsedMessage[] {
+  let rawMessages: any[] = [];
+  try {
+    rawMessages = JSON.parse(messagesJson || '[]');
+  } catch {
+    return [];
+  }
+
+  return rawMessages.map((msg: any) => {
+    let sender: ParsedMessage['sender'] = 'UNKNOWN';
+    if (msg.s === 'U') sender = 'CUSTOMER';
+    else if (msg.s === 'A') sender = 'AGENT';
+    else if (msg.s === 'B') sender = 'BOT';
+    else if (msg.s === 'N') sender = 'INTERNAL_NOTE';
+
+    let content = '';
+    if (typeof msg.m === 'string') {
+      try {
+        const parsed = JSON.parse(msg.m);
+        if (Array.isArray(parsed)) {
+          content = parsed[0]?.message || parsed[0]?.text || '';
+        } else if (parsed.message) {
+          content = parsed.message;
+        } else if (parsed.text) {
+          content = parsed.text;
+        } else {
+          content = msg.m;
+        }
+      } catch {
+        content = msg.m;
+      }
+    } else if (msg.message) {
+      content = msg.message;
+    } else if (msg.content) {
+      content = msg.content;
+    }
+
+    return { sender, content: String(content).substring(0, 500) };
+  }).filter(m => m.content.length > 0);
+}
+
 const router = Router();
 const analysisCache = new NodeCache({ stdTTL: 86400 }); // 24 hour cache for analyses
 
@@ -167,15 +214,27 @@ router.get('/ticket/:id', async (req, res) => {
       console.log(`[Analysis] Customer ${ticket.VISITOR_EMAIL} has ${customerHistory.length} previous tickets`);
     }
 
-    // Run analysis with customer history context
-    const analysis = await analyzeTicket(
+    // Extract first customer message and last agent message for quick analysis
+    const messages = parseMessages(messagesRaw);
+    const firstCustomerMsg = messages.find(m => m.sender === 'CUSTOMER')?.content || '';
+    const lastAgentMsg = messages.filter(m => m.sender === 'AGENT').at(-1)?.content || '';
+    const totalTurns = messages.length;
+
+    // Run HYBRID analysis: Groq quick + Gemini deep in parallel
+    const hybridResult = await analyzeHybrid(
       id,
       messagesRaw,
+      firstCustomerMsg,
+      lastAgentMsg,
+      totalTurns,
       ticket.GROUP_NAME,
       ticket.TAGS,
       customerHistory,
       auditMemories
     );
+
+    // Use merged analysis (Gemini deep if available, else Groq quick fallback)
+    const analysis = hybridResult.merged;
 
     if (ticket.VISITOR_EMAIL) {
       await saveAuditMemory({
@@ -221,6 +280,12 @@ router.get('/ticket/:id', async (req, res) => {
         customerEmail: ticket.VISITOR_EMAIL,
         csat: ticket.TICKET_CSAT,
         date: ticket.DAY
+      },
+      analysisInfo: {
+        path: hybridResult.analysisPath,
+        totalTime: hybridResult.totalTime,
+        groqQuick: hybridResult.groqQuick,
+        geminiDeep: (hybridResult.geminiDeep && 'error' in hybridResult.geminiDeep) ? { error: hybridResult.geminiDeep.error } : undefined
       }
     });
   } catch (error: any) {

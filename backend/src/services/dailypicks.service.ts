@@ -17,8 +17,55 @@ import {
   type AuditMemoryRecord,
 } from './database.service.js';
 import { analyzeTicket, type CustomerTicketHistory } from './gemini.service.js';
+import { analyzeHybrid } from './analysis-hybrid.service.js';
 
 const DEFAULT_PICKS_PER_AGENT = 10;
+
+// Parse messages for Groq quick analysis
+function parseMessagesForHybrid(messagesJson: string): { firstCustomer: string; lastAgent: string; totalTurns: number } {
+  let rawMessages: any[] = [];
+  try {
+    rawMessages = JSON.parse(messagesJson || '[]');
+  } catch {
+    return { firstCustomer: '', lastAgent: '', totalTurns: 0 };
+  }
+
+  let firstCustomer = '';
+  let lastAgent = '';
+  let totalTurns = rawMessages.length;
+
+  for (const msg of rawMessages) {
+    let sender = '';
+    if (msg.s === 'U') sender = 'CUSTOMER';
+    else if (msg.s === 'A') sender = 'AGENT';
+
+    if (sender === 'CUSTOMER' && !firstCustomer) {
+      firstCustomer = extractMessageContent(msg).substring(0, 300);
+    }
+    if (sender === 'AGENT') {
+      lastAgent = extractMessageContent(msg).substring(0, 200);
+    }
+  }
+
+  return { firstCustomer, lastAgent, totalTurns };
+}
+
+function extractMessageContent(msg: any): string {
+  if (typeof msg?.m === 'string') {
+    try {
+      const parsed = JSON.parse(msg.m);
+      if (Array.isArray(parsed)) return String(parsed[0]?.message || parsed[0]?.text || '');
+      if (parsed.message) return String(parsed.message);
+      if (parsed.text) return String(parsed.text);
+      return msg.m;
+    } catch {
+      return msg.m;
+    }
+  }
+  if (msg?.message) return String(msg.message);
+  if (msg?.content) return String(msg.content);
+  return '';
+}
 
 // Mulberry32 — fast, deterministic 32-bit PRNG
 function mulberry32(seed: number): () => number {
@@ -249,14 +296,26 @@ async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyP
         auditMemories = await memoryCache.get(memoryKey)!;
       }
 
-      const analysis = await analyzeTicket(
+      // Extract message snippets for Groq quick analysis
+      const { firstCustomer, lastAgent, totalTurns } = parseMessagesForHybrid(messagesRaw);
+
+      // Run HYBRID analysis: Groq quick + Gemini deep in parallel
+      const hybridResult = await analyzeHybrid(
         pick.ticketId,
         messagesRaw,
+        firstCustomer,
+        lastAgent,
+        totalTurns,
         ticket.GROUP_NAME,
         ticket.TAGS,
         customerHistory,
         auditMemories
       );
+
+      const analysis = hybridResult.merged;
+
+      // Log which path was used for debugging
+      console.log(`[DailyAudit] ticket=${pick.ticketId} path=${hybridResult.analysisPath} time=${hybridResult.totalTime}ms`);
 
       // Persist to DB so TicketPage can retrieve without re-analyzing
       await saveTicketAnalysis(pick.ticketId, analysis, 'daily_audit');
