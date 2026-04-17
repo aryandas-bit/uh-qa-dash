@@ -147,7 +147,7 @@ export default function DashboardPage() {
             </button>
           </div>
           <DatePicker
-            selectedDate={effectiveDate || new Date().toISOString().slice(0, 10)}
+            selectedDate={effectiveDate}
             onDateChange={setSelectedDate}
           />
         </div>
