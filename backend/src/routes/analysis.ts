@@ -119,6 +119,7 @@ router.get('/ticket/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const forceRefresh = req.query.refresh === 'true';
+    const cacheOnly = req.query.cacheOnly === 'true';
 
     // 1. Check in-memory cache (fastest)
     if (!forceRefresh) {
@@ -135,6 +136,12 @@ router.get('/ticket/:id', async (req, res) => {
         const review = await getQAReview(id);
         return res.json({ ticketId: id, analysis: stored, cached: true, review: review || null });
       }
+    }
+
+    // cacheOnly mode: return null analysis instead of triggering Gemini
+    if (cacheOnly) {
+      const review = await getQAReview(id);
+      return res.json({ ticketId: id, analysis: null, cached: false, review: review || null });
     }
 
     // 3. Get ticket data for fresh analysis

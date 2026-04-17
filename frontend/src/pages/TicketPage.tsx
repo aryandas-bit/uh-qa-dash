@@ -160,12 +160,25 @@ export default function TicketPage() {
   const ticket = ticketData?.data?.ticket;
   const messages = ticket?.MESSAGES_JSON ? parseMessages(ticket.MESSAGES_JSON) : [];
 
-  // Auto-analyze when ticket loads
+  // On load: only fetch cached/DB analysis — never trigger Gemini automatically
   useEffect(() => {
     if (!ticket || analysis || isAnalyzing) return;
-    handleAnalyze(false);
+    loadCachedAnalysis();
   }, [ticket]);
 
+  const loadCachedAnalysis = async () => {
+    if (!id) return;
+    try {
+      const response = await analysisApi.getTicketAnalysis(id, false, true);
+      if (response.data.analysis) {
+        setAnalysis(response.data.analysis);
+        setCustomerHistory(response.data.customerHistory || []);
+      }
+      setReview(response.data.review || null);
+    } catch { /* no cached analysis — that's fine */ }
+  };
+
+  // Explicit button click: triggers Gemini analysis
   const handleAnalyze = async (forceRefresh = true) => {
     if (!id) return;
     setIsAnalyzing(true);

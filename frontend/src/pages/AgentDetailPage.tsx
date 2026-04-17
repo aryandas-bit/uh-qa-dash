@@ -133,22 +133,7 @@ export default function AgentDetailPage() {
     setQcProgress(null);
   };
 
-  // Auto-trigger QC analysis when the page loads and the scores query has resolved with no data
-  const currentKey = `${decodedEmail}:${date}:${dateMode}`;
-  useEffect(() => {
-    if (
-      !ticketsLoading &&
-      scoresReady &&           // scores query actually completed (not just "not loading")
-      !qcRunning &&
-      tickets.length > 0 &&
-      Object.keys(cachedScores).length === 0 &&
-      autoTriggeredKey.current !== currentKey
-    ) {
-      autoTriggeredKey.current = currentKey;
-      runBulkQC(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticketsLoading, scoresReady, currentKey]);
+  // No auto-trigger — QC only runs when the user clicks the button
 
   // Calculate stats
   const totalTickets = tickets.length;

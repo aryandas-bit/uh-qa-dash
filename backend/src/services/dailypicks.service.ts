@@ -18,7 +18,7 @@ import {
 } from './database.service.js';
 import { analyzeTicket, type CustomerTicketHistory } from './gemini.service.js';
 
-const DEFAULT_PICKS_PER_AGENT = 20;
+const DEFAULT_PICKS_PER_AGENT = 10;
 
 // Mulberry32 — fast, deterministic 32-bit PRNG
 function mulberry32(seed: number): () => number {

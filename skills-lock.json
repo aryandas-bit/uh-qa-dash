@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "critical-thinking-logical-reasoning": {
+      "source": "sammcj/agentic-coding",
+      "sourceType": "github",
+      "computedHash": "6e5b193215ac5ddcc0fe6e0088f4a67374b57cb02463a3c0a64757724981dc04"
+    }
+  }
+}
