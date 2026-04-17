@@ -1,4 +1,3 @@
-import { useRef } from 'react';
 import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
 import { addDays, formatDate, isAfter, startOfDay, subDays } from '../../utils/date';
 
@@ -13,7 +12,6 @@ export default function DatePicker({
   onDateChange,
   availableDates: _availableDates,
 }: DatePickerProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
   const today = startOfDay(new Date());
   const currentDate = new Date(selectedDate);
 
@@ -44,22 +42,17 @@ export default function DatePicker({
         <ChevronLeft size={20} />
       </button>
 
-      <button
-        onClick={() => inputRef.current?.showPicker()}
-        className="relative flex items-center gap-2 px-4 py-2 bg-white shadow-elevation-1 hover:shadow-elevation-2 rounded-xl min-w-[180px] justify-center transition-all duration-md3 ease-md3 cursor-pointer"
-      >
+      <label className="relative flex items-center gap-2 px-4 py-2 bg-white shadow-elevation-1 hover:shadow-elevation-2 rounded-xl min-w-[180px] justify-center transition-all duration-md3 ease-md3 cursor-pointer">
         <Calendar size={16} className="text-uh-purple" />
         <span className="font-medium">{formatDate(currentDate, 'MMM dd, yyyy')}</span>
         <input
-          ref={inputRef}
           type="date"
           value={selectedDate}
           max={formatDate(today, 'yyyy-MM-dd')}
           onChange={handleInputChange}
           className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-          tabIndex={-1}
         />
-      </button>
+      </label>
 
       <button
         onClick={handleNextDay}
