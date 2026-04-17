@@ -26,7 +26,7 @@ import { agentsApi, ticketsApi, dailyPicksApi } from '../api/client';
 import type { DateMode } from '../api/client';
 
 export default function DashboardPage() {
-  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [dateMode, setDateMode] = useState<DateMode>('activity');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -37,7 +37,7 @@ export default function DashboardPage() {
     staleTime: 1000 * 60 * 60,
   });
 
-  // Auto-select the latest available date once loaded
+  // Use latest available date only if user hasn't manually picked one
   const latestDate = datesData?.data?.dates?.[0];
   const effectiveDate = selectedDate || latestDate || '';
 
