@@ -37,9 +37,20 @@ export default function DashboardPage() {
     staleTime: 1000 * 60 * 60,
   });
 
-  // Auto-select the latest available date once loaded
   const latestDate = datesData?.data?.dates?.[0];
-  const effectiveDate = selectedDate || latestDate || '';
+
+  // Once latestDate loads, snap selectedDate to it (if user hasn't picked one yet)
+  useEffect(() => {
+    if (latestDate && !selectedDate) {
+      setSelectedDate(latestDate);
+    }
+  }, [latestDate]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  // For data queries: only non-empty after latestDate loads or user picks
+  const effectiveDate = selectedDate;
+  // For the picker display: always has a value so the picker always renders
+  const pickerDate = selectedDate || today;
 
   // Fetch agent daily data
   const { data: agentsData, isLoading: agentsLoading } = useQuery({
@@ -147,7 +158,7 @@ export default function DashboardPage() {
             </button>
           </div>
           <DatePicker
-            selectedDate={effectiveDate}
+            selectedDate={pickerDate}
             onDateChange={setSelectedDate}
           />
         </div>
