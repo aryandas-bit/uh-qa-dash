@@ -381,22 +381,13 @@ export async function runDailyAudit(
   }
 
   activeAudits.add(auditKey);
-
-  // Safety timeout: auto-remove audit key after 30 minutes in case batch hangs
-  const timeout = setTimeout(() => {
-    if (activeAudits.has(auditKey)) {
-      console.warn(`[DailyAudit] Timeout — force-removing stale audit key: ${auditKey}`);
-      activeAudits.delete(auditKey);
-    }
-  }, 30 * 60 * 1000);
-
-  // Run analysis in background — don't await
-  processAuditBatch(date, dateMode, unanalyzed)
-    .catch(err => console.error(`[DailyAudit] Batch failed for ${auditKey}:`, err))
-    .finally(() => {
-      clearTimeout(timeout);
-      activeAudits.delete(auditKey);
-    });
+  try {
+    await processAuditBatch(date, dateMode, unanalyzed);
+  } catch (err) {
+    console.error(`[DailyAudit] Batch failed for ${auditKey}:`, err);
+  } finally {
+    activeAudits.delete(auditKey);
+  }
 
   return getAuditStatus(date, dateMode, normalizedAgentEmail);
 }

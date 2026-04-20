@@ -16,6 +16,12 @@ const reviewsDb = createClient({
   authToken: process.env.TURSO_REVIEWS_TOKEN || process.env.TURSO_DB_TOKEN,
 });
 
+// Add indexes on raw_tickets for common query patterns (runs on every cold start, idempotent)
+mainDb.execute(`CREATE INDEX IF NOT EXISTS idx_raw_tickets_day ON raw_tickets(DAY)`).catch(() => {});
+mainDb.execute(`CREATE INDEX IF NOT EXISTS idx_raw_tickets_agent ON raw_tickets(AGENT_EMAIL)`).catch(() => {});
+mainDb.execute(`CREATE INDEX IF NOT EXISTS idx_raw_tickets_init ON raw_tickets(INITIALIZED_TIME)`).catch(() => {});
+mainDb.execute(`CREATE INDEX IF NOT EXISTS idx_raw_tickets_agent_day ON raw_tickets(AGENT_EMAIL, DAY)`).catch(() => {});
+
 const initMainPromise = mainDbUrl.startsWith('file:')
   ? mainDb.execute(`
       CREATE TABLE IF NOT EXISTS raw_tickets (
