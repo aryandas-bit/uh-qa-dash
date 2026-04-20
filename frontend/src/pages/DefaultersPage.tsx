@@ -27,7 +27,7 @@ export default function DefaultersPage() {
             Defaulters
           </h1>
           <p className="text-slate-500 mt-1">
-            Agents with repeated low CSAT scores requiring attention
+            Agents with repeated QA scores below 50
           </p>
         </div>
 
@@ -73,17 +73,17 @@ export default function DefaultersPage() {
           <p className="text-3xl font-bold mt-1">{defaulters.length}</p>
         </div>
         <div className="card">
-          <p className="text-slate-500 text-sm">Total Low CSAT Tickets</p>
+          <p className="text-slate-500 text-sm">Total Low QA Tickets</p>
           <p className="text-3xl font-bold mt-1">
-            {defaulters.reduce((sum: number, d: any) => sum + d.lowCsatCount, 0)}
+            {defaulters.reduce((sum: number, d: any) => sum + d.lowQaCount, 0)}
           </p>
         </div>
         <div className="card">
-          <p className="text-slate-500 text-sm">Avg Low CSAT Rate</p>
+          <p className="text-slate-500 text-sm">Avg Low QA Rate</p>
           <p className="text-3xl font-bold mt-1">
             {defaulters.length > 0
               ? (
-                  defaulters.reduce((sum: number, d: any) => sum + Number(d.lowCsatPercent || 0), 0) /
+                  defaulters.reduce((sum: number, d: any) => sum + Number(d.lowQaPercent || 0), 0) /
                   defaulters.length
                 ).toFixed(1)
               : 0}
@@ -115,9 +115,9 @@ export default function DefaultersPage() {
                 <tr className="text-left text-slate-500 text-sm border-b border-slate-200">
                   <th className="pb-4 pr-4">Agent</th>
                   <th className="pb-4 px-4">Total Tickets</th>
-                  <th className="pb-4 px-4">Low CSAT Count</th>
-                  <th className="pb-4 px-4">Low CSAT %</th>
-                  <th className="pb-4 px-4">Avg CSAT</th>
+                  <th className="pb-4 px-4">Low QA Count (&lt;50)</th>
+                  <th className="pb-4 px-4">Low QA %</th>
+                  <th className="pb-4 px-4">Avg QA Score</th>
                   <th className="pb-4 pl-4">Actions</th>
                 </tr>
               </thead>
@@ -146,26 +146,26 @@ export default function DefaultersPage() {
                       <div className="flex items-center gap-2">
                         <AlertTriangle size={16} className="text-uh-error" />
                         <span className="text-uh-error font-semibold">
-                          {defaulter.lowCsatCount}
+                          {defaulter.lowQaCount}
                         </span>
                       </div>
                     </td>
                     <td className="py-4 px-4">
                       <span
                         className={`font-semibold ${
-                          Number(defaulter.lowCsatPercent) > 20
+                          Number(defaulter.lowQaPercent) > 20
                             ? 'text-uh-error'
-                            : Number(defaulter.lowCsatPercent) > 10
+                            : Number(defaulter.lowQaPercent) > 10
                             ? 'text-uh-warning'
                             : 'text-slate-500'
                         }`}
                       >
-                        {Number(defaulter.lowCsatPercent || 0).toFixed(1)}%
+                        {Number(defaulter.lowQaPercent || 0).toFixed(1)}%
                       </span>
                     </td>
                     <td className="py-4 px-4">
                       <ScoreBadge
-                        score={defaulter.avgCsat ? Number(defaulter.avgCsat) * 20 : null}
+                        score={defaulter.avgQaScore ?? null}
                         size="sm"
                       />
                     </td>
