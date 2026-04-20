@@ -7,7 +7,10 @@
   "scripts": {
     "dev": "node --import tsx/esm src/app.ts",
     "build": "tsc && cp -r src/data dist/",
-    "start": "node dist/app.js"
+    "start": "node dist/app.js",
+    "test": "node --import tsx/esm --test src/tests/**/*.test.ts",
+    "test:router": "node --import tsx/esm --test src/tests/ticket-router.test.ts",
+    "demo:router": "node --import tsx/esm src/services/ticket-router/demo.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
