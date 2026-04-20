@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { useAuthStore } from '../store/authStore';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001/api' : '/api');
 
@@ -8,30 +7,22 @@ export const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 30000,
+  timeout: 30000, // 30 second timeout
 });
 
-// Attach JWT session token to every request
+// Request interceptor for logging
 api.interceptors.request.use((config) => {
-  const token = useAuthStore.getState().token;
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
   console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
   return config;
 });
 
-// Handle auth errors globally — expired/invalid token → sign out
+// Response interceptor for error handling
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      useAuthStore.getState().logout();
-      window.location.href = '/login';
-    }
     console.error('[API Error]', error.response?.data || error.message);
     return Promise.reject(error);
-  },
+  }
 );
 
 // Date mode type - matches Yellow.ai vs Activity date counting
