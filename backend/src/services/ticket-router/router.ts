@@ -71,12 +71,13 @@ export class TicketRouter {
       });
     }
 
-    errors.push(`primary(${primaryModel}): ${primaryAttempt.error}`);
+    const primaryError = (primaryAttempt as { success: false; error: string }).error;
+    errors.push(`primary(${primaryModel}): ${primaryError}`);
     logger.warn('ticket.primary_failed', {
       ticketName: ticket.ticketName,
       ticketNumber: ticket.ticketNumber,
       model: primaryModel,
-      error: primaryAttempt.error,
+      error: primaryError,
     });
 
     const fallbackAttempt = await this.tryModel(fallbackModel, callOptions, ticket);
@@ -96,7 +97,8 @@ export class TicketRouter {
       });
     }
 
-    errors.push(`fallback(${fallbackModel}): ${fallbackAttempt.error}`);
+    const fallbackError = (fallbackAttempt as { success: false; error: string }).error;
+    errors.push(`fallback(${fallbackModel}): ${fallbackError}`);
     logger.error('ticket.failed', {
       ticketName: ticket.ticketName,
       ticketNumber: ticket.ticketNumber,

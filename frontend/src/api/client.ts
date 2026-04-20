@@ -44,7 +44,7 @@ export const agentsApi = {
   getReportCard: (email: string, date: string, dateMode: DateMode = 'activity') =>
     api.get(`/agents/${encodeURIComponent(email)}/report-card?date=${date}&dateMode=${dateMode}`, { timeout: 120000 }),
   auditNow: (email: string, date: string, dateMode: DateMode = 'activity', count = 10) =>
-    api.post(`/agents/${encodeURIComponent(email)}/audit-now`, { date, dateMode, count }, { timeout: 120000 }),
+    api.post('/agents/audit-now', { email, date, dateMode, count }, { timeout: 120000 }),
 };
 
 export const ticketsApi = {

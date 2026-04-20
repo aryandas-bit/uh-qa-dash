@@ -40,6 +40,27 @@ function buildOverallAssessment(avgScore: number, flaggedCount: number): string 
   return 'Critical Attention';
 }
 
+async function handleAuditNowRequest(
+  agentEmail: string,
+  date: string,
+  dateMode: DateMode,
+  count: number
+) {
+  const decodedEmail = decodeURIComponent(agentEmail);
+  const picks = await createAgentRandomSample(date, decodedEmail, dateMode, Math.max(1, Number(count) || 10));
+  const status = await runDailyAudit(date, dateMode);
+
+  return {
+    agentEmail: decodedEmail,
+    date,
+    dateMode,
+    count: picks.length,
+    ticketIds: picks.map((pick) => pick.ticketId),
+    picks,
+    auditStatus: status,
+  };
+}
+
 // GET /api/agents/dates - Get available dates
 router.get('/dates', async (req, res) => {
   try {
@@ -81,6 +102,26 @@ router.get('/daily', async (req, res) => {
   } catch (error) {
     console.error('Error fetching agent summary:', error);
     res.status(500).json({ error: 'Failed to fetch agent summary' });
+  }
+});
+
+// POST /api/agents/audit-now - Safer body-based route for creating a random 10-ticket sample
+router.post('/audit-now', async (req, res) => {
+  try {
+    const { email, date, dateMode = 'activity', count = 10 } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'email is required' });
+    }
+    if (!date) {
+      return res.status(400).json({ error: 'date is required' });
+    }
+
+    const payload = await handleAuditNowRequest(String(email), String(date), dateMode as DateMode, Number(count));
+    res.json(payload);
+  } catch (error) {
+    console.error('Error creating audit-now sample:', error);
+    res.status(500).json({ error: 'Failed to create random audit sample' });
   }
 });
 
@@ -151,24 +192,13 @@ router.post('/:email/audit-now', async (req, res) => {
   try {
     const { email } = req.params;
     const { date, dateMode = 'activity', count = 10 } = req.body;
-    const decodedEmail = decodeURIComponent(email);
 
     if (!date) {
       return res.status(400).json({ error: 'date is required' });
     }
 
-    const picks = await createAgentRandomSample(date, decodedEmail, dateMode, Math.max(1, Number(count) || 10));
-    const status = await runDailyAudit(date, dateMode);
-
-    res.json({
-      agentEmail: decodedEmail,
-      date,
-      dateMode,
-      count: picks.length,
-      ticketIds: picks.map((pick) => pick.ticketId),
-      picks,
-      auditStatus: status,
-    });
+    const payload = await handleAuditNowRequest(email, String(date), dateMode as DateMode, Number(count));
+    res.json(payload);
   } catch (error) {
     console.error('Error creating audit-now sample:', error);
     res.status(500).json({ error: 'Failed to create random audit sample' });
