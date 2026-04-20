@@ -16,6 +16,5 @@
       "source": "/:path*",
       "destination": "/index.html"
     }
-  ],
-  "experimentalServices": {}
+  ]
 }
