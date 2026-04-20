@@ -870,27 +870,95 @@ export async function getCustomerHistory(email: string, limit = 50): Promise<Tic
   return (result.rows as unknown as any[]).map(normalizeTicketRow);
 }
 
-// Get agents with frequent low CSAT (defaulters)
+// Get agents with QA scores below 50 (defaulters)
 export async function getDefaulters(minIssues = 5, days = 30) {
-  await initMainPromise;
-  const result = await mainDb.execute({
-    sql: `SELECT
-            AGENT_EMAIL as agentEmail,
-            COUNT(DISTINCT TICKET_ID) as totalTickets,
-            COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 AND CAST(TICKET_CSAT AS REAL) < 3 THEN TICKET_ID END) as lowCsatCount,
-            ROUND(AVG(CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 THEN CAST(TICKET_CSAT AS REAL) ELSE NULL END), 2) as avgCsat,
-            ROUND(100.0 * COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 AND CAST(TICKET_CSAT AS REAL) < 3 THEN TICKET_ID END) /
-                  NULLIF(COUNT(DISTINCT CASE WHEN CAST(TICKET_CSAT AS REAL) > 0 THEN TICKET_ID END), 0), 1) as lowCsatPercent
-          FROM raw_tickets
-          WHERE AGENT_EMAIL IS NOT NULL
-            AND AGENT_EMAIL != ''
-            AND DAY >= date('now', '-' || ? || ' days')
-          GROUP BY AGENT_EMAIL
-          HAVING lowCsatCount >= ?
-          ORDER BY lowCsatCount DESC`,
-    args: [days, minIssues],
+  await Promise.all([initMainPromise, initPromise]);
+
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+  const sinceStr = since.toISOString().split('T')[0];
+
+  // Step 1: all tickets with qa_score < 50 analyzed within the window
+  const lowQaResult = await reviewsDb.execute({
+    sql: `SELECT ticket_id, qa_score FROM qa_scores WHERE qa_score < 50 AND analyzed_at >= ?`,
+    args: [sinceStr],
   });
-  return result.rows;
+
+  if (lowQaResult.rows.length === 0) return [];
+
+  const lowTicketIds = lowQaResult.rows.map(r => String(r.ticket_id));
+
+  // Step 2: resolve agent emails for those tickets from main DB
+  const placeholders = lowTicketIds.map(() => '?').join(',');
+  const agentResult = await mainDb.execute({
+    sql: `SELECT DISTINCT TICKET_ID, AGENT_EMAIL FROM raw_tickets
+          WHERE TICKET_ID IN (${placeholders})
+            AND AGENT_EMAIL IS NOT NULL AND AGENT_EMAIL != ''`,
+    args: lowTicketIds,
+  });
+
+  const ticketToAgent = new Map<string, string>();
+  for (const row of agentResult.rows) {
+    ticketToAgent.set(String(row.TICKET_ID), String(row.AGENT_EMAIL));
+  }
+
+  // Step 3: group by agent — sum scores + count low-QA tickets
+  const agentMap = new Map<string, { lowQaCount: number; totalQaScore: number }>();
+  for (const row of lowQaResult.rows) {
+    const agent = ticketToAgent.get(String(row.ticket_id));
+    if (!agent) continue;
+    const entry = agentMap.get(agent) ?? { lowQaCount: 0, totalQaScore: 0 };
+    entry.lowQaCount++;
+    entry.totalQaScore += Number(row.qa_score);
+    agentMap.set(agent, entry);
+  }
+
+  // Step 4: total analyzed tickets per agent in the same window (denominator for %)
+  const agentEmails = [...agentMap.keys()];
+  if (agentEmails.length === 0) return [];
+
+  const agentPlaceholders = agentEmails.map(() => '?').join(',');
+  const totalResult = await reviewsDb.execute({
+    sql: `SELECT rt.AGENT_EMAIL, COUNT(DISTINCT qs.ticket_id) as totalAnalyzed
+          FROM qa_scores qs
+          JOIN (
+            SELECT DISTINCT TICKET_ID, AGENT_EMAIL FROM raw_tickets
+            WHERE AGENT_EMAIL IN (${agentPlaceholders})
+          ) rt ON qs.ticket_id = rt.TICKET_ID
+          WHERE qs.analyzed_at >= ?
+          GROUP BY rt.AGENT_EMAIL`,
+    args: [...agentEmails, sinceStr],
+  });
+
+  // Turso doesn't support cross-DB JOINs — fall back to app-side join
+  const agentTotals = new Map<string, number>();
+  if (totalResult.rows.length > 0) {
+    for (const row of totalResult.rows) {
+      agentTotals.set(String(row.AGENT_EMAIL), Number(row.totalAnalyzed));
+    }
+  } else {
+    // fallback: total tickets in main DB in the window
+    const fallbackResult = await mainDb.execute({
+      sql: `SELECT AGENT_EMAIL, COUNT(DISTINCT TICKET_ID) as total FROM raw_tickets
+            WHERE AGENT_EMAIL IN (${agentPlaceholders}) AND DAY >= ?
+            GROUP BY AGENT_EMAIL`,
+      args: [...agentEmails, sinceStr],
+    });
+    for (const row of fallbackResult.rows) {
+      agentTotals.set(String(row.AGENT_EMAIL), Number(row.total));
+    }
+  }
+
+  // Step 5: build final rows, apply minIssues filter
+  return [...agentMap.entries()]
+    .filter(([, s]) => s.lowQaCount >= minIssues)
+    .map(([agentEmail, s]) => {
+      const totalTickets = agentTotals.get(agentEmail) || s.lowQaCount;
+      const avgQaScore = Math.round((s.totalQaScore / s.lowQaCount) * 10) / 10;
+      const lowQaPercent = Math.round((s.lowQaCount / totalTickets) * 1000) / 10;
+      return { agentEmail, totalTickets, lowQaCount: s.lowQaCount, avgQaScore, lowQaPercent };
+    })
+    .sort((a, b) => b.lowQaCount - a.lowQaCount);
 }
 
 // Get flagged tickets (low CSAT or slow response) - deduplicated
