@@ -70,9 +70,17 @@ export async function analyzeQuick(
         const statusCode = response.status;
         console.warn(`[Groq Quick] Model ${model} ${statusCode}, trying next...`, errorText.substring(0, 100));
 
+        // Auth errors: fail fast, don't try other models
+        if (statusCode === 401 || statusCode === 403) {
+          throw new Error(`Groq auth error ${statusCode}`);
+        }
         // 404 or 410 means model not available, try next one
         if (statusCode === 404 || statusCode === 410 || (statusCode === 400 && errorText.includes('decommissioned'))) {
           continue;
+        }
+        // Rate limit: fail fast (don't burn quota retrying)
+        if (statusCode === 429) {
+          throw new Error(`Groq rate limited ${statusCode}`);
         }
         // For other errors, fail immediately
         throw new Error(`Groq API ${statusCode}`);

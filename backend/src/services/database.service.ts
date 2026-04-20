@@ -104,6 +104,14 @@ const initPromise = reviewsDb.execute(`
     /* column already exists */
   })
 ).then(() =>
+  reviewsDb.execute(`ALTER TABLE daily_picks ADD COLUMN pick_reason TEXT`).catch(() => {
+    /* column already exists */
+  })
+).then(() =>
+  reviewsDb.execute(`ALTER TABLE daily_picks ADD COLUMN risk_score REAL`).catch(() => {
+    /* column already exists */
+  })
+).then(() =>
   reviewsDb.execute(`CREATE INDEX IF NOT EXISTS idx_daily_picks_date_mode ON daily_picks(pick_date, date_mode)`).catch(() => {})
 ).then(() =>
   reviewsDb.execute(`
@@ -127,6 +135,28 @@ const initPromise = reviewsDb.execute(`
   reviewsDb.execute(`ALTER TABLE qa_scores ADD COLUMN deductions_json TEXT`).catch(() => {
     /* column already exists */
   })
+).then(() =>
+  reviewsDb.execute(`
+    CREATE TABLE IF NOT EXISTS ticket_quick_scores (
+      ticket_id TEXT PRIMARY KEY,
+      sentiment TEXT,
+      priority TEXT,
+      has_error INTEGER,
+      issue_category TEXT,
+      risk_score REAL,
+      analyzed_at TEXT NOT NULL
+    )
+  `)
+).then(() =>
+  reviewsDb.execute(`
+    CREATE TABLE IF NOT EXISTS daily_agent_qa_scores (
+      agent_email TEXT,
+      date TEXT,
+      avg_score REAL,
+      scored_count INTEGER,
+      PRIMARY KEY (agent_email, date)
+    )
+  `)
 );
 
 export interface DailyPick {
@@ -135,6 +165,8 @@ export interface DailyPick {
   agentEmail: string;
   ticketId: string;
   pickOrder: number;
+  riskScore: number | null;
+  pickReason: string | null;
   analyzed: boolean;
   analysisStatus: string | null;
 }
@@ -143,30 +175,34 @@ export async function getDailyPicksFromDb(date: string, dateMode: DateMode = 'ac
   await initPromise;
   const result = await reviewsDb.execute({
     sql: `SELECT pick_date as pickDate, date_mode as dateMode, agent_email as agentEmail, ticket_id as ticketId,
-                 pick_order as pickOrder, analyzed, analysis_status as analysisStatus
+                 pick_order as pickOrder, risk_score as riskScore, pick_reason as pickReason, analyzed, analysis_status as analysisStatus
           FROM daily_picks WHERE pick_date = ? AND date_mode = ? ORDER BY agent_email, pick_order`,
     args: [date, dateMode],
   });
   return (result.rows as unknown as any[]).map(r => ({
     ...r,
     analyzed: Boolean(r.analyzed) && r.analysisStatus === 'success',
+    riskScore: r.riskScore != null ? Number(r.riskScore) : null,
+    pickReason: r.pickReason || null,
   }));
 }
 
-export async function saveDailyPicks(picks: Array<{ pickDate: string; dateMode: DateMode; agentEmail: string; ticketId: string; pickOrder: number; analyzed?: boolean; analysisStatus?: string | null }>): Promise<void> {
+export async function saveDailyPicks(picks: Array<{ pickDate: string; dateMode: DateMode; agentEmail: string; ticketId: string; pickOrder: number; risk_score?: number; pick_reason?: string; analyzed?: boolean; analysisStatus?: string | null }>): Promise<void> {
   await initPromise;
   if (picks.length === 0) return;
   const now = new Date().toISOString();
   // Batch insert in a single transaction instead of N individual round-trips
   const statements = picks.map(pick => ({
-    sql: `INSERT OR IGNORE INTO daily_picks (pick_date, date_mode, agent_email, ticket_id, pick_order, analyzed, analysis_status, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT OR IGNORE INTO daily_picks (pick_date, date_mode, agent_email, ticket_id, pick_order, risk_score, pick_reason, analyzed, analysis_status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       pick.pickDate,
       pick.dateMode,
       pick.agentEmail,
       pick.ticketId,
       pick.pickOrder,
+      pick.risk_score ?? null,
+      pick.pick_reason ?? null,
       pick.analyzed ? 1 : 0,
       pick.analysisStatus || null,
       now
@@ -271,6 +307,13 @@ export interface DailyPickCandidate {
   ticketId: string;
   agentEmail: string;
   initializedTime: string | null;
+  csat: number | null;
+  priority: string | null;
+  firstResponseSeconds: number | null;
+  messageCount: number | null;
+  userMessageCount: number | null;
+  agentMessageCount: number | null;
+  ticketStatus: string | null;
 }
 
 export async function getDailyPickCandidates(date: string, dateMode: DateMode = 'activity'): Promise<DailyPickCandidate[]> {
@@ -280,20 +323,34 @@ export async function getDailyPickCandidates(date: string, dateMode: DateMode = 
     sql: `SELECT
             AGENT_EMAIL as agentEmail,
             TICKET_ID as ticketId,
-            MAX(INITIALIZED_TIME) as initializedTime
+            MAX(INITIALIZED_TIME) as initializedTime,
+            MAX(TICKET_CSAT) as csat,
+            MAX(PRIORITY) as priority,
+            MAX(FIRST_RESPONSE_DURATION_SECONDS) as firstResponseSeconds,
+            MAX(MESSAGE_COUNT) as messageCount,
+            MAX(USER_MESSAGE_COUNT) as userMessageCount,
+            MAX(AGENT_MESSAGE_COUNT) as agentMessageCount,
+            MAX(TICKET_STATUS) as ticketStatus
           FROM raw_tickets
           WHERE ${dateCondition}
             AND AGENT_EMAIL IS NOT NULL
             AND AGENT_EMAIL != ''
             AND TICKET_ID IS NOT NULL
           GROUP BY AGENT_EMAIL, TICKET_ID
-          ORDER BY AGENT_EMAIL ASC, MAX(INITIALIZED_TIME) DESC`,
+          ORDER BY AGENT_EMAIL ASC`,
     args: [date],
   });
   return (result.rows as unknown as any[]).map((row) => ({
     ticketId: String(row.ticketId),
     agentEmail: String(row.agentEmail),
     initializedTime: row.initializedTime ? String(row.initializedTime) : null,
+    csat: row.csat != null && row.csat !== '' ? Number(row.csat) : null,
+    priority: row.priority ? String(row.priority) : null,
+    firstResponseSeconds: row.firstResponseSeconds != null ? Number(row.firstResponseSeconds) : null,
+    messageCount: row.messageCount != null ? Number(row.messageCount) : null,
+    userMessageCount: row.userMessageCount != null ? Number(row.userMessageCount) : null,
+    agentMessageCount: row.agentMessageCount != null ? Number(row.agentMessageCount) : null,
+    ticketStatus: row.ticketStatus ? String(row.ticketStatus) : null,
   }));
 }
 
@@ -1111,6 +1168,75 @@ export async function saveQAScore(
           VALUES (?, ?, ?, ?, datetime('now'))`,
     args: [ticketId, qaScore, summary || null, deductions ? JSON.stringify(deductions) : null],
   });
+
+  // Trigger aggregation for agent daily stats (fire and forget)
+  getTicketMetadata(ticketId).then(meta => {
+    if (meta?.agentEmail && meta?.date) {
+      recalculateAgentDailyScore(meta.agentEmail, meta.date).catch(err => 
+        console.error(`[DB] Failed to recalculate score for ${meta.agentEmail} on ${meta.date}:`, err)
+      );
+    }
+  }).catch(err => console.error(`[DB] Failed to fetch metadata for ticket ${ticketId}:`, err));
+}
+
+export async function getTicketMetadata(ticketId: string): Promise<{ agentEmail: string; date: string } | null> {
+  await initMainPromise;
+  const result = await mainDb.execute({
+    sql: `SELECT AGENT_EMAIL as agentEmail, DAY as date FROM raw_tickets WHERE TICKET_ID = ? LIMIT 1`,
+    args: [ticketId],
+  });
+  const row = result.rows[0] as unknown as any;
+  if (!row) return null;
+  return {
+    agentEmail: String(row.agentEmail),
+    date: String(row.date)
+  };
+}
+
+export async function recalculateAgentDailyScore(agentEmail: string, date: string): Promise<void> {
+  await initPromise;
+  await initMainPromise;
+
+  const ticketIds = await getAgentTicketIds(agentEmail, date, 'activity');
+  if (ticketIds.length === 0) return;
+
+  const scores = await getQAScoresBulk(ticketIds);
+  const scoreValues = Object.values(scores).map(s => s.qaScore);
+
+  if (scoreValues.length === 0) {
+    await reviewsDb.execute({
+      sql: `DELETE FROM daily_agent_qa_scores WHERE agent_email = ? AND date = ?`,
+      args: [agentEmail, date],
+    });
+    return;
+  }
+
+  const avgScore = scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length;
+
+  await reviewsDb.execute({
+    sql: `INSERT OR REPLACE INTO daily_agent_qa_scores (agent_email, date, avg_score, scored_count)
+          VALUES (?, ?, ?, ?)`,
+    args: [agentEmail, date, avgScore, scoreValues.length],
+  });
+}
+
+export async function getAgentQATrend(agentEmail: string, limitDays = 14): Promise<Array<{ date: string; avgScore: number }>> {
+  await initPromise;
+  const result = await reviewsDb.execute({
+    sql: `SELECT date, avg_score as avgScore 
+          FROM daily_agent_qa_scores 
+          WHERE agent_email = ? 
+          ORDER BY date DESC 
+          LIMIT ?`,
+    args: [agentEmail, limitDays],
+  });
+  
+  return (result.rows as unknown as any[])
+    .map(r => ({
+      date: String(r.date),
+      avgScore: Number(r.avgScore)
+    }))
+    .reverse(); // Chronological order
 }
 
 // Bulk-fetch persisted QA scores for a list of ticket IDs
@@ -1139,6 +1265,63 @@ export async function getQAScoresBulk(
       summary: row.summary,
       deductions: row.deductions_json ? JSON.parse(row.deductions_json) : [],
     };
+  });
+  return out;
+}
+
+export interface TicketQuickScore {
+  ticketId: string;
+  sentiment: string;
+  priority: string;
+  hasError: boolean;
+  issueCategory: string;
+  riskScore: number;
+}
+
+export async function getQuickScoresBulk(ticketIds: string[]): Promise<Record<string, TicketQuickScore>> {
+  if (ticketIds.length === 0) return {};
+  await initPromise;
+  const placeholders = ticketIds.map(() => '?').join(',');
+  const result = await reviewsDb.execute({
+    sql: `SELECT ticket_id as ticketId, sentiment, priority, has_error as hasError, issue_category as issueCategory, risk_score as riskScore
+          FROM ticket_quick_scores
+          WHERE ticket_id IN (${placeholders})`,
+    args: ticketIds,
+  });
+  const rows = result.rows as unknown as any[];
+  const out: Record<string, TicketQuickScore> = {};
+  rows.forEach((row) => {
+    out[row.ticketId] = {
+      ...row,
+      hasError: Boolean(row.hasError),
+    };
+  });
+  return out;
+}
+
+export async function saveQuickScoresBulk(scores: TicketQuickScore[]): Promise<void> {
+  if (scores.length === 0) return;
+  await initPromise;
+  const now = new Date().toISOString();
+  const statements = scores.map((s) => ({
+    sql: `INSERT OR REPLACE INTO ticket_quick_scores (ticket_id, sentiment, priority, has_error, issue_category, risk_score, analyzed_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: [s.ticketId, s.sentiment, s.priority, s.hasError ? 1 : 0, s.issueCategory, s.riskScore, now],
+  }));
+  await reviewsDb.batch(statements, 'write');
+}
+
+export async function getTicketMessagesBulk(ticketIds: string[]): Promise<Record<string, string>> {
+  if (ticketIds.length === 0) return {};
+  await initMainPromise;
+  const placeholders = ticketIds.map(() => '?').join(',');
+  const result = await mainDb.execute({
+    sql: `SELECT TICKET_ID, MAX(MESSAGES_JSON) as messages FROM raw_tickets WHERE TICKET_ID IN (${placeholders}) GROUP BY TICKET_ID`,
+    args: ticketIds,
+  });
+  const out: Record<string, string> = {};
+  result.rows.forEach((row) => {
+    out[String(row.TICKET_ID)] = String(row.messages || '[]');
   });
   return out;
 }

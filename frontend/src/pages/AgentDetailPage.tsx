@@ -1,20 +1,31 @@
 import { useParams, useSearchParams, Link } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Mail, Ticket, Clock, CheckCircle, AlertTriangle, Calendar, CalendarCheck, ThumbsUp, Flag, Skull, Sparkles, Loader2 } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { ArrowLeft, Mail, Ticket, Clock, CheckCircle, AlertTriangle, Calendar, CalendarCheck, ThumbsUp, Flag, Skull, Sparkles, TrendingDown } from 'lucide-react';
 import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { agentsApi, analysisApi } from '../api/client';
+import { agentsApi, analysisApi, dailyPicksApi } from '../api/client';
 import type { DateMode } from '../api/client';
+import { getAvatarColor, getAvatarInitial } from '../utils/avatarColors';
+import AgentTrendSparkline from '../components/agent/AgentTrendSparkline';
+import { useDateStore } from '../store/dateStore';
+import { useEffect } from 'react';
 
 interface ScoreEntry {
   qaScore: number;
   summary: string | null;
   deductions: Array<{ category: string; points: number; reason: string }>;
 }
+
+interface AgentDailyPick {
+  ticketId: string;
+  agentEmail: string;
+  pickReason?: string | null;
+}
+
 export default function AgentDetailPage() {
   const { email } = useParams<{ email: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { selectedDate, setSelectedDate, dateMode: storeDateMode, setDateMode: setStoreDateMode } = useDateStore();
 
   // Fetch available dates to get a valid fallback
   const { data: datesData } = useQuery({
@@ -23,8 +34,26 @@ export default function AgentDetailPage() {
     staleTime: 1000 * 60 * 60,
   });
   const latestDate = datesData?.data?.dates?.[0] || '';
-  const date = searchParams.get('date') || latestDate;
-  const dateMode = (searchParams.get('dateMode') as DateMode) || 'activity';
+
+  // Priorities: URL param > Global Store > API Latest
+  const urlDate = searchParams.get('date');
+  const urlDateMode = searchParams.get('dateMode') as DateMode;
+
+  const date = urlDate || selectedDate || latestDate;
+  const dateMode = urlDateMode || storeDateMode || 'activity';
+
+  // Sync URL params to store if they are present and different
+  useEffect(() => {
+    if (urlDate && urlDate !== selectedDate) setSelectedDate(urlDate);
+    if (urlDateMode && urlDateMode !== storeDateMode) setStoreDateMode(urlDateMode);
+  }, [urlDate, urlDateMode, selectedDate, storeDateMode, setSelectedDate, setStoreDateMode]);
+
+  // Initial fallback to latest date if nothing is set
+  useEffect(() => {
+    if (!selectedDate && latestDate && !urlDate) {
+      setSelectedDate(latestDate);
+    }
+  }, [latestDate, selectedDate, urlDate, setSelectedDate]);
 
   const decodedEmail = decodeURIComponent(email || '');
   const agentName = decodedEmail.split('@')[0].replace(/[._]/g, ' ').replace(/_ext$/, '');
@@ -40,11 +69,26 @@ export default function AgentDetailPage() {
 
   const handleDateChange = (newDate: string) => {
     setSearchParams({ date: newDate, dateMode });
+    setSelectedDate(newDate);
   };
 
   const handleDateModeChange = (newMode: DateMode) => {
     setSearchParams({ date, dateMode: newMode });
+    setStoreDateMode(newMode);
   };
+
+  // Fetch daily picks to highlight them in the list
+  const { data: picksData } = useQuery({
+    queryKey: ['daily-picks', date, dateMode],
+    queryFn: () => dailyPicksApi.getPicks(date, dateMode).then((response) => response.data),
+    enabled: !!date,
+    staleTime: 1000 * 60 * 30,
+  });
+
+  const agentPicks: AgentDailyPick[] = (picksData?.picks || []).filter(
+    (pick: AgentDailyPick) => pick.agentEmail === decodedEmail
+  );
+  const pickMap = new Map<string, AgentDailyPick>(agentPicks.map((pick) => [pick.ticketId, pick]));
 
   const tickets = ticketsData?.data?.tickets || [];
 
@@ -58,82 +102,32 @@ export default function AgentDetailPage() {
   });
   const reviews: Record<string, { status: string; note: string | null }> = reviewsData?.data?.reviews || {};
 
-  const [qcRunning, setQcRunning] = useState(false);
-  const [qcProgress, setQcProgress] = useState<{ done: number; total: number } | null>(null);
-
-  // Fetch cached QA scores for all loaded tickets.
-  // Poll every 8s until all tickets have scores — this way every user (not just
-  // the one who clicked Run QC) sees scores appear as they are computed.
+  // Fetch cached QA scores for all loaded tickets (no polling — scores only appear via manual audit)
   const { data: scoresData } = useQuery({
     queryKey: ['cached-scores', ticketIds.join(',')],
     queryFn: () => analysisApi.getCachedScores(ticketIds),
     enabled: ticketIds.length > 0,
-    staleTime: 0,
-    refetchInterval: (query) => {
-      const scores = (query.state.data as any)?.data?.scores || {};
-      const scored = Object.keys(scores).length;
-      // Stop polling once every ticket has a score
-      return scored < ticketIds.length ? 8000 : false;
-    },
+    staleTime: 1000 * 60 * 5,
   });
   const cachedScores: Record<string, ScoreEntry> = scoresData?.data?.scores || {};
-  // True only once the scores query has actually resolved (not just "not loading")
-  const scoresReady = scoresData !== undefined;
 
-  // Bulk QC analysis state
-  const queryClient = useQueryClient();
-  // Track which (email, date, dateMode) combos have been auto-triggered so we don't repeat
-  const autoTriggeredKey = useRef('');
+  // Groq-powered agent insights (feeds off stored Gemini analyses)
+  const { data: insightsData } = useQuery({
+    queryKey: ['agent-insights', decodedEmail, date, dateMode],
+    queryFn: () => analysisApi.getAgentInsights(decodedEmail, date, dateMode),
+    enabled: !!decodedEmail && !!date,
+    staleTime: 1000 * 60 * 10,
+  });
+  const insightsResult = insightsData?.data;
 
-  const CHUNK_SIZE = 8;
-
-  const runBulkQC = async (forceRefresh = false) => {
-    if (tickets.length === 0 || qcRunning) return;
-    setQcRunning(true);
-    setQcProgress(null);
-
-    const allIds = tickets.map((t: any) => String(t.TICKET_ID));
-    const chunks: string[][] = [];
-    for (let i = 0; i < allIds.length; i += CHUNK_SIZE) {
-      chunks.push(allIds.slice(i, i + CHUNK_SIZE));
-    }
-
-    setQcProgress({ done: 0, total: allIds.length });
-
-    const scoresKey = ['cached-scores', allIds.join(',')];
-
-    for (const chunk of chunks) {
-      try {
-        const resp = await analysisApi.batchAnalyze(date, undefined, chunk.length, dateMode, chunk, forceRefresh);
-        const results: any[] = resp.data?.results || [];
-
-        // Directly update the scores cache from the batch response — avoids
-        // a stale-cache roundtrip and shows scores immediately after each chunk.
-        queryClient.setQueryData(scoresKey, (old: any) => {
-          const existing: Record<string, ScoreEntry> = old?.data?.scores || {};
-          const merged = { ...existing };
-          results.forEach((r: any) => {
-            if (r.analysis?.qaScore !== undefined) {
-              merged[String(r.ticketId)] = {
-                qaScore: r.analysis.qaScore,
-                summary: r.analysis.summary ?? null,
-                deductions: r.analysis.deductions ?? [],
-              };
-            }
-          });
-          return { ...(old ?? {}), data: { scores: merged } };
-        });
-      } catch (err) {
-        console.error('QC chunk failed:', err);
-      }
-      setQcProgress(prev => ({ done: Math.min((prev?.done ?? 0) + chunk.length, allIds.length), total: allIds.length }));
-    }
-
-    setQcRunning(false);
-    setQcProgress(null);
-  };
-
-  // No auto-trigger — QC only runs when the user clicks the button
+  // Fetch QA trend for sparkline
+  const { data: trendData } = useQuery({
+    queryKey: ['agent-qa-trend', decodedEmail],
+    queryFn: () => agentsApi.getQATrend(decodedEmail, 30), // Get last 30 days of data
+    enabled: !!decodedEmail,
+    staleTime: 1000 * 60 * 5,
+  });
+  const trend = trendData?.data?.trend || [];
 
   // Calculate stats
   const totalTickets = tickets.length;
@@ -257,16 +251,30 @@ export default function AgentDetailPage() {
       {/* Header */}
       <div className="flex items-center gap-4 mb-8">
         <Link
-          to="/"
+          to="/tickets"
           className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 transition-all"
         >
           <ArrowLeft size={20} />
         </Link>
+        <div
+          className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg shrink-0"
+          style={{ background: getAvatarColor(agentName).bg, color: getAvatarColor(agentName).fg }}
+        >
+          {getAvatarInitial(agentName)}
+        </div>
         <div className="flex-1">
           <h1 className="text-2xl font-bold capitalize">{agentName}</h1>
           <div className="flex items-center gap-2 text-slate-500 mt-1">
             <Mail size={14} />
             <span className="text-sm">{decodedEmail}</span>
+          </div>
+        </div>
+        <div className="hidden lg:flex items-center gap-4 px-6 border-x border-slate-100 mx-4 h-12">
+          <div className="text-right">
+            <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1">QA Trend (30d)</p>
+            <div className="w-32 h-8">
+              <AgentTrendSparkline data={trend} showTooltip />
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -350,6 +358,61 @@ export default function AgentDetailPage() {
             </div>
           </div>
 
+          {/* AI Insights (Groq, feeds off stored Gemini analyses) */}
+          {insightsResult?.stats && (
+            <div className="card mb-6 bg-gradient-to-br from-uh-purple/5 to-uh-cyan/5 border border-uh-purple/10">
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-xl bg-uh-purple/20 shrink-0">
+                  <Sparkles size={18} className="text-uh-purple" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-2">
+                    <h3 className="text-sm font-semibold">AI Insights</h3>
+                    <span className="text-[10px] uppercase tracking-wide text-slate-400">
+                      Groq · {insightsResult.stats.analyzedCount}/{insightsResult.stats.totalTickets} audited
+                    </span>
+                  </div>
+                  {insightsResult.insight ? (
+                    <p className="text-sm text-slate-700 leading-relaxed">{insightsResult.insight}</p>
+                  ) : insightsResult.stats.analyzedCount === 0 ? (
+                    <p className="text-sm text-slate-500">No tickets audited yet for this date. Click any ticket below to audit it individually.</p>
+                  ) : (
+                    <p className="text-sm text-slate-500">Insight unavailable — stats only.</p>
+                  )}
+                  {insightsResult.stats.analyzedCount > 0 && (
+                    <div className="flex items-center gap-4 mt-3 text-xs">
+                      <span className="flex items-center gap-1">
+                        <span className="font-semibold text-slate-700">Avg QA:</span>
+                        <span className={`font-bold ${
+                          (insightsResult.stats.avgScore ?? 0) >= 80 ? 'text-uh-success' :
+                          (insightsResult.stats.avgScore ?? 0) >= 60 ? 'text-uh-warning' : 'text-uh-error'
+                        }`}>
+                          {insightsResult.stats.avgScore ?? '—'}
+                        </span>
+                      </span>
+                      {insightsResult.stats.lowScoreCount > 0 && (
+                        <span className="flex items-center gap-1 text-uh-error">
+                          <TrendingDown size={12} />
+                          {insightsResult.stats.lowScoreCount} low-score
+                        </span>
+                      )}
+                      {insightsResult.stats.topDeductionCategories?.length > 0 && (
+                        <span className="flex items-center gap-1.5">
+                          <span className="text-slate-500">Top misses:</span>
+                          {insightsResult.stats.topDeductionCategories.slice(0, 3).map((c: any) => (
+                            <span key={c.category} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] capitalize">
+                              {c.category} <span className="font-semibold">×{c.count}</span>
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Issue Breakdown */}
             <div className="card">
@@ -402,6 +465,20 @@ export default function AgentDetailPage() {
                               {ticket.TICKET_STATUS}
                             </span>
                             <ReviewBadge ticketId={String(ticket.TICKET_ID)} />
+                            {(() => {
+                              const pick = pickMap.get(String(ticket.TICKET_ID));
+                              if (!pick) return null;
+
+                              return (
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                pick.pickReason === 'High Risk'
+                                  ? 'bg-uh-error/10 text-uh-error border border-uh-error/20'
+                                  : 'bg-uh-cyan/10 text-uh-cyan border border-uh-cyan/20'
+                              }`}>
+                                Daily: {pick.pickReason}
+                              </span>
+                              );
+                            })()}
                           </div>
                           <p className="text-sm mt-1 truncate">{ticket.SUBJECT}</p>
                           <p className="text-xs text-slate-400 mt-1 truncate">
@@ -431,42 +508,9 @@ export default function AgentDetailPage() {
                 <h2 className="text-lg font-semibold">All Tickets ({totalTickets})</h2>
                 <p className="text-xs text-slate-400 mt-0.5">
                   {Object.keys(cachedScores).length > 0
-                    ? `${Object.keys(cachedScores).length} of ${totalTickets} scored`
-                    : 'No QC scores yet — click Run QC to analyze'}
+                    ? `${Object.keys(cachedScores).length} of ${totalTickets} audited`
+                    : 'Click any ticket to view and audit it individually'}
                 </p>
-              </div>
-              <div className="flex items-center gap-3">
-                {qcRunning && qcProgress && (
-                  <span className="text-xs text-slate-400 tabular-nums">
-                    {qcProgress.done} / {qcProgress.total}
-                  </span>
-                )}
-                <button
-                  onClick={() => runBulkQC(false)}
-                  disabled={qcRunning || tickets.length === 0}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-uh-purple text-white hover:bg-uh-purple/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                >
-                  {qcRunning ? (
-                    <>
-                      <Loader2 size={14} className="animate-spin" />
-                      Analyzing…
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles size={14} />
-                      Run QC
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={() => runBulkQC(true)}
-                  disabled={qcRunning || tickets.length === 0}
-                  title="Re-score all tickets using the latest SOPs (ignores cached scores)"
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-uh-purple text-uh-purple hover:bg-uh-purple/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                >
-                  <Sparkles size={14} />
-                  Re-score
-                </button>
               </div>
             </div>
             <div className="overflow-x-auto">

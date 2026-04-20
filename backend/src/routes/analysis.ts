@@ -146,8 +146,37 @@ function parseMessages(messagesJson: string): ParsedMessage[] {
   }).filter(m => m.content.length > 0);
 }
 
+async function getTicketAnalysisContext(ticketId: string) {
+  const ticket = await getTicketById(ticketId);
+  if (!ticket) {
+    return {
+      ticket: null,
+      issueSignature: '',
+      auditMemories: [] as AuditMemoryRecord[],
+      customerHistory: [] as CustomerTicketHistory[],
+    };
+  }
+
+  const issueSignature = buildIssueSignature(ticket);
+  const auditMemories = ticket.VISITOR_EMAIL
+    ? await getRelevantAuditMemories(ticket.VISITOR_EMAIL, issueSignature, 3)
+    : [];
+  const customerHistory = ticket.VISITOR_EMAIL
+    ? formatCustomerHistoryForAnalysis(
+        await getCustomerHistory(ticket.VISITOR_EMAIL, 20),
+        ticketId,
+        ticket.INITIALIZED_TIME
+      )
+    : [];
+
+  return { ticket, issueSignature, auditMemories, customerHistory };
+}
+
 const router = Router();
 const analysisCache = new NodeCache({ stdTTL: 86400 }); // 24 hour cache for analyses
+
+// Deduplicate concurrent analysis requests for the same ticket
+const inFlightAnalyses = new Map<string, Promise<any>>();
 
 // GET /api/analysis/sops - Get all available SOPs
 router.get('/sops', (req, res) => {
@@ -172,26 +201,41 @@ router.get('/ticket/:id', async (req, res) => {
     if (!forceRefresh) {
       const cached = analysisCache.get(id);
       if (cached) {
+        const { auditMemories, customerHistory } = await getTicketAnalysisContext(id);
         const review = await getQAReview(id);
-        return res.json({ ticketId: id, analysis: cached, cached: true, review: review || null });
+        return res.json({ ticketId: id, analysis: cached, cached: true, review: review || null, auditMemories, customerHistory: customerHistory.slice(0, 10) });
       }
 
       // 2. Check DB (persisted across restarts)
       const stored = await getStoredTicketAnalysis(id);
       if (stored) {
         analysisCache.set(id, stored); // warm up memory cache
+        const { auditMemories, customerHistory } = await getTicketAnalysisContext(id);
         const review = await getQAReview(id);
-        return res.json({ ticketId: id, analysis: stored, cached: true, review: review || null });
+        return res.json({ ticketId: id, analysis: stored, cached: true, review: review || null, auditMemories, customerHistory: customerHistory.slice(0, 10) });
       }
     }
 
     // cacheOnly mode: return null analysis instead of triggering Gemini
     if (cacheOnly) {
+      const { auditMemories, customerHistory } = await getTicketAnalysisContext(id);
       const review = await getQAReview(id);
-      return res.json({ ticketId: id, analysis: null, cached: false, review: review || null });
+      return res.json({ ticketId: id, analysis: null, cached: false, review: review || null, auditMemories, customerHistory: customerHistory.slice(0, 10) });
     }
 
-    // 3. Get ticket data for fresh analysis
+    // 3. Deduplicate: if another request is already analyzing this ticket, wait for it
+    if (inFlightAnalyses.has(id)) {
+      try {
+        const existing = await inFlightAnalyses.get(id);
+        const { auditMemories, customerHistory } = await getTicketAnalysisContext(id);
+        const review = await getQAReview(id);
+        return res.json({ ticketId: id, analysis: existing, cached: true, review: review || null, auditMemories, customerHistory: customerHistory.slice(0, 10) });
+      } catch {
+        // Previous request failed — fall through and try again
+      }
+    }
+
+    // 4. Get ticket data for fresh analysis
     const ticket = await getTicketById(id);
     if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found' });
@@ -220,8 +264,8 @@ router.get('/ticket/:id', async (req, res) => {
     const lastAgentMsg = messages.filter(m => m.sender === 'AGENT').at(-1)?.content || '';
     const totalTurns = messages.length;
 
-    // Run HYBRID analysis: Groq quick + Gemini deep in parallel
-    const hybridResult = await analyzeHybrid(
+    // Run HYBRID analysis: Groq quick + Gemini deep in parallel (with dedup)
+    const analysisPromise = analyzeHybrid(
       id,
       messagesRaw,
       firstCustomerMsg,
@@ -232,6 +276,14 @@ router.get('/ticket/:id', async (req, res) => {
       customerHistory,
       auditMemories
     );
+    inFlightAnalyses.set(id, analysisPromise.then(r => r.merged));
+
+    let hybridResult;
+    try {
+      hybridResult = await analysisPromise;
+    } finally {
+      inFlightAnalyses.delete(id);
+    }
 
     // Use merged analysis (Gemini deep if available, else Groq quick fallback)
     const analysis = hybridResult.merged;
@@ -273,6 +325,7 @@ router.get('/ticket/:id', async (req, res) => {
       analysis,
       cached: false,
       review: review || null,
+      auditMemories,
       customerHistory: customerHistory.slice(0, 10),
       ticket: {
         subject: ticket.SUBJECT,
@@ -309,11 +362,17 @@ router.post('/ticket/:id/review', async (req, res) => {
 
     // Sync to Google Sheets (non-blocking)
     const ticket = await getTicketById(id);
+    const scores = await getQAScoresBulk([id]);
+    const scoreInfo = scores[id];
+
     upsertReviewToSheet(id, status, note, reviewerName, {
       subject: ticket?.SUBJECT,
       agentEmail: ticket?.AGENT_EMAIL,
       csat: ticket?.TICKET_CSAT,
       day: ticket?.DAY,
+      qaScore: scoreInfo?.qaScore,
+      summary: scoreInfo?.summary || undefined,
+      deductions: scoreInfo?.deductions?.map(d => `${d.category}: ${d.reason}`).join(' | '),
     }).catch(err => console.error('[Sheets] Failed to sync review:', err.message));
 
     res.json({ ticketId: id, review });
@@ -610,6 +669,88 @@ router.get('/reviews', async (req, res) => {
   } catch (error) {
     console.error('Error fetching reviews:', error);
     res.status(500).json({ error: 'Failed to fetch reviews' });
+  }
+});
+
+// GET /api/analysis/agent/:email/insights - Groq-powered miss trends from stored Gemini analyses
+router.get('/agent/:email/insights', async (req, res) => {
+  try {
+    const { email } = req.params;
+    const date = req.query.date as string;
+    const dateMode = ((req.query.dateMode as string) || 'activity') as 'activity' | 'initialized';
+    const decodedEmail = decodeURIComponent(email);
+
+    if (!date) return res.status(400).json({ error: 'Date parameter is required' });
+
+    const tickets = await getAgentTickets(decodedEmail, date, 500, 0, dateMode);
+    if (tickets.length === 0) return res.json({ insight: null, stats: null });
+
+    const ticketIds = tickets.map(t => String(t.TICKET_ID));
+    const scores = await getQAScoresBulk(ticketIds);
+    const analyzedEntries = Object.values(scores) as Array<{ qaScore: number; summary: string | null; deductions: Array<{ category: string; points: number; reason: string }> }>;
+
+    if (analyzedEntries.length === 0) {
+      return res.json({ insight: null, stats: { totalTickets: tickets.length, analyzedCount: 0, avgScore: null, topDeductionCategories: [], lowScoreCount: 0 } });
+    }
+
+    const avgScore = analyzedEntries.reduce((sum, s) => sum + (s.qaScore || 0), 0) / analyzedEntries.length;
+    const lowScoreCount = analyzedEntries.filter(s => s.qaScore < 60).length;
+
+    const catCounts: Record<string, number> = {};
+    analyzedEntries.forEach(s => {
+      (s.deductions || []).forEach(d => {
+        const cat = (d.category || 'other').toLowerCase();
+        catCounts[cat] = (catCounts[cat] || 0) + 1;
+      });
+    });
+
+    const topDeductionCategories = Object.entries(catCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([category, count]) => ({ category, count }));
+
+    const stats = {
+      totalTickets: tickets.length,
+      analyzedCount: analyzedEntries.length,
+      avgScore: Math.round(avgScore * 10) / 10,
+      topDeductionCategories,
+      lowScoreCount,
+    };
+
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) return res.json({ insight: null, stats });
+
+    const agentName = decodedEmail.split('@')[0];
+    const prompt = `You are a QA analyst. Summarize this agent's performance on ${date} in exactly 2 short sentences. Be specific and direct.
+Agent: ${agentName}
+Tickets handled: ${tickets.length} | Analyzed: ${analyzedEntries.length}
+Avg QA Score: ${stats.avgScore}/100 | Low-score tickets (<60): ${lowScoreCount}
+Top issues: ${topDeductionCategories.map(c => `${c.category}(${c.count}x)`).join(', ') || 'none'}
+
+Return only the 2 sentences, no labels.`;
+
+    const models = ['llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
+    let insight: string | null = null;
+    for (const model of models) {
+      try {
+        const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.4, max_tokens: 120 }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (r.ok) {
+          const d = await r.json() as any;
+          insight = d.choices?.[0]?.message?.content?.trim() || null;
+          break;
+        }
+      } catch { continue; }
+    }
+
+    res.json({ insight, stats });
+  } catch (error) {
+    console.error('[AgentInsights] Error:', error);
+    res.status(500).json({ error: 'Failed to generate insights' });
   }
 });
 

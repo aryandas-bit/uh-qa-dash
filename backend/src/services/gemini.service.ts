@@ -776,8 +776,10 @@ async function callGroq(prompt: string, apiKey: string): Promise<{ candidates: {
   throw lastError || new Error('Groq API failed after 2 attempts');
 }
 
-async function callGemini(prompt: string, apiKey: string): Promise<{ candidates: { content: { parts: { text: string }[] } }[] }> {
-  const model = CONFIGURED_GEMINI_MODEL;
+const GEMINI_TIMEOUT_MS = 60000; / 60 second timeout per request
+const MAX_RETRIES_PER_MODEL = 3;
+
+async function callGemini(prompt: string, apiKey: string) {
   const requestBody = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
@@ -790,46 +792,59 @@ async function callGemini(prompt: string, apiKey: string): Promise<{ candidates:
 
   let lastError: Error | null = null;
 
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
+  // Outer loop: try each model candidate
+  for (const model of GEMINI_MODEL_CANDIDATES) {
+    // Inner loop: retry same model on transient errors (429/5xx)
+    for (let attempt = 1; attempt <= MAX_RETRIES_PER_MODEL; attempt += 1) {
+      try {
+        const response = await fetch(`${GEMINI_API_BASE}/${model}:generateContent`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-goog-api-key': apiKey,
+          },
+          body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
+        });
 
-    try {
-      const response = await fetch(`${GEMINI_API_BASE}/${model}:generateContent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-goog-api-key': apiKey },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      });
+        if (response.ok) {
+          return response.json();
+        }
 
-      clearTimeout(timeout);
+        const errorText = await response.text();
+        lastError = new Error(`Gemini ${model}: ${response.status}`);
 
-      if (response.ok) return response.json();
+        // Model-level issue: skip to next model immediately
+        if (shouldTryNextModel(response.status, errorText)) {
+          console.warn(`[Gemini] ${model} unavailable (${response.status}), trying next model`);
+          break;
+        }
 
-      const errorText = await response.text();
-      lastError = new Error(`Gemini ${model} HTTP ${response.status}: ${errorText.slice(0, 300)}`);
+        // Non-retryable client error: throw immediately
+        if (response.status !== 429 && response.status < 500) {
+          console.error(`[Gemini] ${model} non-retryable ${response.status}:`, errorText.substring(0, 200));
+          throw lastError;
+        }
 
-      if (response.status !== 429 && response.status < 500) {
-        console.error(`Gemini error (non-retryable) status=${response.status}:`, errorText);
-        throw lastError;
-      }
-
-      const backoff = RETRY_BACKOFF_MS * attempt;
-      console.warn(`Gemini ${model} ${response.status}, retry ${attempt}/2 in ${backoff}ms`);
-      await sleep(backoff);
-    } catch (err: any) {
-      clearTimeout(timeout);
-      if (err.name === 'AbortError') {
-        lastError = new Error(`Gemini ${model} timed out after 20s (attempt ${attempt}/2)`);
-        console.warn(lastError.message);
-        if (attempt < 2) await sleep(RETRY_BACKOFF_MS);
-      } else {
-        throw err;
+        // Retryable (429/5xx): backoff and retry same model
+        const retryMatch = errorText.match(/retryDelay.*?(\d+)/);
+        const backoff = retryMatch ? Math.min(parseInt(retryMatch[1], 10) * 1000, 10000) : RETRY_BACKOFF_MS * attempt;
+        console.warn(`[Gemini] ${model} ${response.status}, retry ${attempt}/${MAX_RETRIES_PER_MODEL} in ${backoff}ms`);
+        await sleep(backoff);
+      } catch (err) {
+        // Timeout or network error
+        if (err instanceof Error && err.name === 'TimeoutError') {
+          console.warn(`[Gemini] ${model} timed out after ${GEMINI_TIMEOUT_MS}ms, attempt ${attempt}`);
+          lastError = new Error(`Gemini ${model}: timeout`);
+        } else if (lastError === null || !(err instanceof Error && err.message.includes('Gemini'))) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+        }
+        // On timeout, try next attempt or next model
       }
     }
   }
 
-  throw lastError || new Error(`Gemini API failed after 2 attempts`);
+  throw lastError || new Error(`Gemini API failed after all models exhausted`);
 }
 
 function sleep(ms: number): Promise<void> {

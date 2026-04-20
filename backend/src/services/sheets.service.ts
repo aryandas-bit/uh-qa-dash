@@ -8,7 +8,8 @@ const SHEET_NAME = 'QC Reviews';
 
 const HEADERS = [
   'Ticket ID', 'Subject', 'Agent', 'CSAT', 'Ticket Date',
-  'QC Status', 'Note', 'Reviewed By', 'Reviewed At'
+  'QC Status', 'Note', 'Reviewed By', 'Reviewed At',
+  'QA Score', 'AI Summary', 'Deductions', 'Dashboard Link'
 ];
 
 function getAuth() {
@@ -87,6 +88,9 @@ export interface ReviewTicketInfo {
   agentEmail?: string;
   csat?: number | string;
   day?: string;
+  qaScore?: number;
+  summary?: string;
+  deductions?: string;
 }
 
 export async function upsertReviewToSheet(
@@ -100,6 +104,7 @@ export async function upsertReviewToSheet(
     const sheets = await getSheets();
     await ensureSheet(sheets);
 
+    const dashboardUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     const row = [
       ticketId,
       ticketInfo.subject || '',
@@ -110,6 +115,10 @@ export async function upsertReviewToSheet(
       note || '',
       reviewerName || '',
       new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+      ticketInfo.qaScore ?? '',
+      ticketInfo.summary || '',
+      ticketInfo.deductions || '',
+      `${dashboardUrl}/ticket/${ticketId}`,
     ];
 
     const existingRow = await findTicketRow(sheets, ticketId);

@@ -5,6 +5,7 @@ import {
   getAgentPerformance,
   getDefaulters,
   getAvailableDates,
+  getAgentQATrend,
   DateMode
 } from '../services/database.service.js';
 import NodeCache from 'node-cache';
@@ -102,6 +103,19 @@ router.get('/:email/performance', async (req, res) => {
   } catch (error) {
     console.error('Error fetching agent performance:', error);
     res.status(500).json({ error: 'Failed to fetch agent performance' });
+  }
+});
+
+// GET /api/agents/:email/qa-trend - Get agent QA score trend
+router.get('/:email/qa-trend', async (req, res) => {
+  try {
+    const { email } = req.params;
+    const limit = parseInt(req.query.limit as string) || 14;
+    const trend = await getAgentQATrend(email, limit);
+    res.json({ agentEmail: email, limit, trend });
+  } catch (error) {
+    console.error('Error fetching agent QA trend:', error);
+    res.status(500).json({ error: 'Failed to fetch agent QA trend' });
   }
 });
 

@@ -8,5 +8,6 @@
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["api/**/*", "backend/src/**/*"]
+  "include": ["api/**/*", "backend/src/**/*"],
+  "exclude": ["backend/src/scratch/**/*", "backend/scratch/**/*"]
 }
