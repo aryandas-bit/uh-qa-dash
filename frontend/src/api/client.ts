@@ -41,6 +41,8 @@ export const agentsApi = {
     api.get(`/agents/defaulters?minIssues=${minIssues}&days=${days}`),
   getQATrend: (email: string, limit = 14) =>
     api.get(`/agents/${encodeURIComponent(email)}/qa-trend?limit=${limit}`),
+  getReportCard: (email: string, date: string, dateMode: DateMode = 'activity') =>
+    api.get(`/agents/${encodeURIComponent(email)}/report-card?date=${date}&dateMode=${dateMode}`, { timeout: 120000 }),
 };
 
 export const ticketsApi = {

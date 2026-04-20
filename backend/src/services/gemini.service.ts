@@ -776,7 +776,7 @@ async function callGroq(prompt: string, apiKey: string): Promise<{ candidates: {
   throw lastError || new Error('Groq API failed after 2 attempts');
 }
 
-const GEMINI_TIMEOUT_MS = 60000; / 60 second timeout per request
+const GEMINI_TIMEOUT_MS = 60000; // 60 second timeout per request
 const MAX_RETRIES_PER_MODEL = 3;
 
 async function callGemini(prompt: string, apiKey: string) {
