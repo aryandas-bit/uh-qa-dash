@@ -11,14 +11,67 @@ import {
   getStoredTicketAnalysisIds,
   getRelevantAuditMemories,
   saveAuditMemory,
+  getQuickScoresBulk,
+  saveQuickScoresBulk,
+  getTicketMessagesBulk,
   type DailyPick,
   type DateMode,
   type TicketRow,
   type AuditMemoryRecord,
+  type TicketQuickScore,
+  type DailyPickCandidate,
 } from './database.service.js';
 import { analyzeTicket, type CustomerTicketHistory } from './gemini.service.js';
+import { analyzeHybrid } from './analysis-hybrid.service.js';
+import { analyzeQuick, type QuickAnalysis } from './groq.service.js';
 
-const DEFAULT_PICKS_PER_AGENT = 20;
+const DEFAULT_PICKS_PER_AGENT = 10;
+
+// Parse messages for Groq quick analysis
+function parseMessagesForHybrid(messagesJson: string): { firstCustomer: string; lastAgent: string; totalTurns: number } {
+  let rawMessages: any[] = [];
+  try {
+    rawMessages = JSON.parse(messagesJson || '[]');
+  } catch {
+    return { firstCustomer: '', lastAgent: '', totalTurns: 0 };
+  }
+
+  let firstCustomer = '';
+  let lastAgent = '';
+  let totalTurns = rawMessages.length;
+
+  for (const msg of rawMessages) {
+    let sender = '';
+    if (msg.s === 'U') sender = 'CUSTOMER';
+    else if (msg.s === 'A') sender = 'AGENT';
+
+    if (sender === 'CUSTOMER' && !firstCustomer) {
+      firstCustomer = extractMessageContent(msg).substring(0, 300);
+    }
+    if (sender === 'AGENT') {
+      lastAgent = extractMessageContent(msg).substring(0, 200);
+    }
+  }
+
+  return { firstCustomer, lastAgent, totalTurns };
+}
+
+function extractMessageContent(msg: any): string {
+  if (typeof msg?.m === 'string') {
+    try {
+      const parsed = JSON.parse(msg.m);
+      if (Array.isArray(parsed)) return String(parsed[0]?.message || parsed[0]?.text || '');
+      if (parsed.message) return String(parsed.message);
+      if (parsed.text) return String(parsed.text);
+      return msg.m;
+    } catch {
+      return msg.m;
+    }
+  }
+  if (msg?.message) return String(msg.message);
+  if (msg?.content) return String(msg.content);
+  return '';
+}
 
 // Mulberry32 — fast, deterministic 32-bit PRNG
 function mulberry32(seed: number): () => number {
@@ -44,6 +97,21 @@ function seededShuffle<T>(arr: T[], rng: () => number): T[] {
   return shuffled;
 }
 
+function calculateRiskScore(analysis: QuickAnalysis): number {
+  let score = 0;
+  // Risk = (sentiment=angry: 3pts) + (priority=urgent: 2pts) + (hasError: 1pt)
+  if (analysis.sentiment === 'angry') score += 3;
+  else if (analysis.sentiment === 'negative') score += 1; // Slight boost for negative too
+
+  if (analysis.priority === 'urgent') score += 2;
+  if (analysis.hasError) score += 1;
+
+  return score;
+}
+
+const MAX_CANDIDATES_TO_SCORE_PER_AGENT = 40;
+const GROQ_CONCURRENCY = 5;
+
 export async function getDailyPicks(
   date: string,
   picksPerAgent = DEFAULT_PICKS_PER_AGENT,
@@ -56,35 +124,132 @@ export async function getDailyPicks(
     return { picks: existing, generated: false };
   }
 
-  const candidates = await getDailyPickCandidates(date, dateMode);
-  if (candidates.length === 0) {
+  const rawCandidates = await getDailyPickCandidates(date, dateMode);
+  if (rawCandidates.length === 0) {
     return { picks: [], generated: true };
   }
 
-  const rng = mulberry32(dateToSeed(date));
-  const allPicks: Array<{ pickDate: string; dateMode: DateMode; agentEmail: string; ticketId: string; pickOrder: number; analyzed?: boolean; analysisStatus?: string | null }> = [];
-  const byAgent = new Map<string, string[]>();
-
-  candidates.forEach((candidate) => {
-    const existingCandidates = byAgent.get(candidate.agentEmail) || [];
-    existingCandidates.push(candidate.ticketId);
-    byAgent.set(candidate.agentEmail, existingCandidates);
+  // Pre-sort candidates to limit Groq calls if we have huge volumes
+  // Heuristic: lower CSAT first, then Urgent priority
+  const candidatesByAgent = new Map<string, DailyPickCandidate[]>();
+  rawCandidates.forEach((c) => {
+    const list = candidatesByAgent.get(c.agentEmail) || [];
+    list.push(c);
+    candidatesByAgent.set(c.agentEmail, list);
   });
 
-  const storedAnalysisByTicket = await getStoredTicketAnalysisIds(candidates.map((candidate) => candidate.ticketId));
+  const candidatesToScore: DailyPickCandidate[] = [];
+  candidatesByAgent.forEach((list) => {
+    // Sort each agent's tickets by heuristic: low CSAT, then priority
+    const sorted = [...list].sort((a, b) => {
+      const aCsat = a.csat ?? 5;
+      const bCsat = b.csat ?? 5;
+      if (aCsat !== bCsat) return aCsat - bCsat; // Lower CSAT is riskier
+      if (a.priority === 'Urgent' && b.priority !== 'Urgent') return -1;
+      if (a.priority !== 'Urgent' && b.priority === 'Urgent') return 1;
+      return 0;
+    });
+    // Take top N for Groq analysis
+    candidatesToScore.push(...sorted.slice(0, MAX_CANDIDATES_TO_SCORE_PER_AGENT));
+  });
 
-  byAgent.forEach((ticketIds, agentEmail) => {
-    const shuffled = seededShuffle(ticketIds, rng);
-    const picked = shuffled.slice(0, Math.min(picksPerAgent, shuffled.length));
+  const candidateIds = candidatesToScore.map(c => c.ticketId);
+  const existingScores = await getQuickScoresBulk(candidateIds);
+  const unscoredIds = candidateIds.filter(id => !existingScores[id]);
 
-    picked.forEach((ticketId, idx) => {
-      const hasStoredAnalysis = storedAnalysisByTicket.has(ticketId);
+  // Perform Groq analysis for unscored candidates
+  if (unscoredIds.length > 0) {
+    console.log(`[DailyPicks] Scoring ${unscoredIds.length} unscored candidates with Groq...`);
+    const messages = await getTicketMessagesBulk(unscoredIds);
+    const newScores: TicketQuickScore[] = [];
+
+    // Process in concurrent chunks
+    for (let i = 0; i < unscoredIds.length; i += GROQ_CONCURRENCY) {
+      const chunk = unscoredIds.slice(i, i + GROQ_CONCURRENCY);
+      await Promise.all(chunk.map(async (ticketId) => {
+        const messagesRaw = messages[ticketId] || '[]';
+        const { firstCustomer, lastAgent, totalTurns } = parseMessagesForHybrid(messagesRaw);
+        try {
+          const quick = await analyzeQuick(ticketId, firstCustomer, lastAgent, totalTurns);
+          const riskScore = calculateRiskScore(quick);
+          newScores.push({
+            ticketId,
+            sentiment: quick.sentiment,
+            priority: quick.priority,
+            hasError: quick.hasError,
+            issueCategory: quick.issueCategory,
+            riskScore
+          });
+        } catch (err) {
+          console.warn(`[DailyPicks] Failed to score ticket ${ticketId}:`, err);
+        }
+      }));
+    }
+
+    if (newScores.length > 0) {
+      await saveQuickScoresBulk(newScores);
+      newScores.forEach(s => {
+        existingScores[s.ticketId] = s;
+      });
+    }
+  }
+
+  const allPicks: Array<{ pickDate: string; dateMode: DateMode; agentEmail: string; ticketId: string; pickOrder: number; risk_score?: number; pick_reason?: string; analyzed?: boolean; analysisStatus?: string | null }> = [];
+  const storedAnalysisByTicket = await getStoredTicketAnalysisIds(rawCandidates.map((c) => c.ticketId));
+
+  candidatesByAgent.forEach((agentCandidates, agentEmail) => {
+    const rng = mulberry32(dateToSeed(date + agentEmail));
+    
+    // Initial shuffle of all candidates for variety
+    const shuffledPool = seededShuffle(agentCandidates, rng);
+
+    // Score and rank all in the pool
+    const ranked = shuffledPool.map(c => ({
+      candidate: c,
+      score: existingScores[c.ticketId]?.riskScore ?? 0,
+      rand: rng()
+    })).sort((a, b) => {
+      // Sort by score descending, then by their pre-assigned random value
+      if (b.score !== a.score) return b.score - a.score;
+      return b.rand - a.rand;
+    });
+
+    const totalToPick = Math.min(picksPerAgent, ranked.length);
+    const riskLimit = Math.max(1, Math.floor(totalToPick * 0.7)); // 70% slots for risk (min 1 if pickable)
+    
+    const pickedTickets = new Set<string>();
+    const finalPicks: Array<{ candidate: any; score: number; reason: string }> = [];
+
+    // 1. Fill Risk Slots (Only if they have a non-zero risk score)
+    const riskCandidates = ranked.filter(r => r.score > 0);
+    for (let i = 0; i < Math.min(riskLimit, riskCandidates.length); i++) {
+      const p = riskCandidates[i];
+      finalPicks.push({ candidate: p.candidate, score: p.score, reason: 'High Risk' });
+      pickedTickets.add(p.candidate.ticketId);
+    }
+
+    // 2. Fill the rest with Random Audit (Diverse sampling)
+    // We shuffle the remaining unpicked tickets to get true diversity
+    const remainingCandidates = ranked.filter(r => !pickedTickets.has(r.candidate.ticketId));
+    const randomSlotsNeeded = totalToPick - finalPicks.length;
+    
+    for (let i = 0; i < Math.min(randomSlotsNeeded, remainingCandidates.length); i++) {
+        const p = remainingCandidates[i];
+        finalPicks.push({ candidate: p.candidate, score: p.score, reason: 'Random Audit' });
+        pickedTickets.add(p.candidate.ticketId);
+    }
+
+    // Map to the final storage format
+    finalPicks.forEach((p, idx) => {
+      const hasStoredAnalysis = storedAnalysisByTicket.has(p.candidate.ticketId);
       allPicks.push({
         pickDate: date,
         dateMode,
         agentEmail,
-        ticketId,
+        ticketId: p.candidate.ticketId,
         pickOrder: idx + 1,
+        risk_score: p.score,
+        pick_reason: p.reason,
         analyzed: hasStoredAnalysis,
         analysisStatus: hasStoredAnalysis ? 'success' : null,
       });
@@ -152,10 +317,12 @@ export async function runDailyAudit(date: string, dateMode: DateMode = 'activity
   }, 30 * 60 * 1000);
 
   // Run analysis in background — don't await
-  processAuditBatch(date, dateMode, unanalyzed).finally(() => {
-    clearTimeout(timeout);
-    activeAudits.delete(auditKey);
-  });
+  processAuditBatch(date, dateMode, unanalyzed)
+    .catch(err => console.error(`[DailyAudit] Batch failed for ${auditKey}:`, err))
+    .finally(() => {
+      clearTimeout(timeout);
+      activeAudits.delete(auditKey);
+    });
 
   return getAuditStatus(date, dateMode);
 }
@@ -249,14 +416,26 @@ async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyP
         auditMemories = await memoryCache.get(memoryKey)!;
       }
 
-      const analysis = await analyzeTicket(
+      // Extract message snippets for Groq quick analysis
+      const { firstCustomer, lastAgent, totalTurns } = parseMessagesForHybrid(messagesRaw);
+
+      // Run HYBRID analysis: Groq quick + Gemini deep in parallel
+      const hybridResult = await analyzeHybrid(
         pick.ticketId,
         messagesRaw,
+        firstCustomer,
+        lastAgent,
+        totalTurns,
         ticket.GROUP_NAME,
         ticket.TAGS,
         customerHistory,
         auditMemories
       );
+
+      const analysis = hybridResult.merged;
+
+      // Log which path was used for debugging
+      console.log(`[DailyAudit] ticket=${pick.ticketId} path=${hybridResult.analysisPath} time=${hybridResult.totalTime}ms`);
 
       // Persist to DB so TicketPage can retrieve without re-analyzing
       await saveTicketAnalysis(pick.ticketId, analysis, 'daily_audit');

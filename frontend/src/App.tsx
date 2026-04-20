@@ -4,6 +4,7 @@ import Layout from './components/layout/Layout';
 import DashboardPage from './pages/DashboardPage';
 import AgentDetailPage from './pages/AgentDetailPage';
 import TicketPage from './pages/TicketPage';
+import TicketsPage from './pages/TicketsPage';
 import CustomerPage from './pages/CustomerPage';
 import DefaultersPage from './pages/DefaultersPage';
 import QCReviewsPage from './pages/QCReviewsPage';
@@ -27,6 +28,7 @@ function App() {
             <Route path="agent/:email" element={<AgentDetailPage />} />
             <Route path="ticket/:id" element={<TicketPage />} />
             <Route path="customer/:email" element={<CustomerPage />} />
+            <Route path="tickets" element={<TicketsPage />} />
             <Route path="defaulters" element={<DefaultersPage />} />
             <Route path="qc-reviews" element={<QCReviewsPage />} />
           </Route>

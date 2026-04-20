@@ -39,6 +39,10 @@ export const agentsApi = {
     api.get(`/agents/${encodeURIComponent(email)}/performance?startDate=${startDate}&endDate=${endDate}`),
   getDefaulters: (minIssues = 5, days = 30) =>
     api.get(`/agents/defaulters?minIssues=${minIssues}&days=${days}`),
+  getQATrend: (email: string, limit = 14) =>
+    api.get(`/agents/${encodeURIComponent(email)}/qa-trend?limit=${limit}`),
+  getReportCard: (email: string, date: string, dateMode: DateMode = 'activity') =>
+    api.get(`/agents/${encodeURIComponent(email)}/report-card?date=${date}&dateMode=${dateMode}`, { timeout: 120000 }),
 };
 
 export const ticketsApi = {
@@ -51,8 +55,8 @@ export const ticketsApi = {
 
 export const analysisApi = {
   getSOPs: () => api.get('/analysis/sops'),
-  getTicketAnalysis: (id: string, refresh = false) =>
-    api.get(`/analysis/ticket/${id}?refresh=${refresh}`),
+  getTicketAnalysis: (id: string, refresh = false, cacheOnly = false) =>
+    api.get(`/analysis/ticket/${id}?refresh=${refresh}&cacheOnly=${cacheOnly}`, { timeout: 120000 }),
   batchAnalyze: (date: string, agentEmail?: string, limit = 20, dateMode: DateMode = 'activity', ticketIds?: string[], forceRefresh = false) =>
     api.post('/analysis/batch', { date, agentEmail, limit, prioritizeFlagged: true, dateMode, ticketIds, forceRefresh }, { timeout: 120000 }),
   getAgentSummary: (email: string, date: string) =>
@@ -65,6 +69,8 @@ export const analysisApi = {
     api.get(`/analysis/reviews${ticketIds?.length ? `?ticketIds=${ticketIds.join(',')}` : ''}`),
   getCachedScores: (ticketIds: string[]) =>
     api.get(`/analysis/cached-scores${ticketIds.length ? `?ticketIds=${ticketIds.join(',')}` : ''}`),
+  getAgentInsights: (email: string, date: string, dateMode: DateMode = 'activity') =>
+    api.get(`/analysis/agent/${encodeURIComponent(email)}/insights?date=${date}&dateMode=${dateMode}`),
 };
 
 export const customersApi = {

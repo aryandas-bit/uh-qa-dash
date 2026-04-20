@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import {
@@ -6,7 +6,6 @@ import {
   ChevronRight,
   Calendar,
   CalendarCheck,
-  Search,
   Ticket,
   TrendingUp,
   AlertTriangle,
@@ -18,17 +17,21 @@ import {
   Loader2,
   X,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  RefreshCw,
+  Inbox
 } from 'lucide-react';
 import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { agentsApi, ticketsApi, dailyPicksApi } from '../api/client';
+import { api, agentsApi, ticketsApi, dailyPicksApi } from '../api/client';
 import type { DateMode } from '../api/client';
+import { getAvatarColor, getAvatarInitial } from '../utils/avatarColors';
+import AgentTrendSparkline from '../components/agent/AgentTrendSparkline';
+import { useDateStore } from '../store/dateStore';
+import { useEffect } from 'react';
 
 export default function DashboardPage() {
-  const [selectedDate, setSelectedDate] = useState('');
-  const [dateMode, setDateMode] = useState<DateMode>('activity');
-  const [searchQuery, setSearchQuery] = useState('');
+  const { selectedDate, setSelectedDate, dateMode, setDateMode } = useDateStore();
 
   // Fetch available dates to auto-select the latest
   const { data: datesData, isLoading: datesLoading } = useQuery({
@@ -43,14 +46,12 @@ export default function DashboardPage() {
   // Picker always has a value — shows today as placeholder while dates are loading
   const pickerDate = effectiveDate || new Date().toISOString().slice(0, 10);
 
-  // Fetch agent daily data
-  const { data: agentsData, isLoading: agentsLoading } = useQuery({
-    queryKey: ['agents', effectiveDate, dateMode],
-    queryFn: () => agentsApi.getDaily(effectiveDate, dateMode),
-    enabled: !!effectiveDate,
-    staleTime: 1000 * 60 * 30,
-    gcTime: 1000 * 60 * 60,
-  });
+  // Auto-select the latest available date once loaded IF no date is already selected
+  useEffect(() => {
+    if (!selectedDate && latestDate) {
+      setSelectedDate(latestDate);
+    }
+  }, [latestDate, selectedDate, setSelectedDate]);
 
   // Fetch daily insights
   const { data: insightsData, isLoading: insightsLoading } = useQuery({
@@ -61,36 +62,11 @@ export default function DashboardPage() {
     gcTime: 1000 * 60 * 60,
   });
 
-  const agents = agentsData?.data?.agents || [];
   const insights = insightsData?.data || {};
   const summary = insights.summary || {};
   const topIssues = insights.topIssues || [];
   const bestAgents = insights.bestAgents || [];
   const frustratedCustomers = insights.frustratedCustomers || [];
-
-  // Filter agents by search query
-  const filteredAgents = useMemo(() => {
-    if (!searchQuery.trim()) return agents;
-    const query = searchQuery.toLowerCase();
-    return agents.filter((agent: any) => {
-      const agentEmail = agent?.agentEmail || '';
-      const name = formatAgentName(agentEmail).toLowerCase();
-      const email = agentEmail.toLowerCase();
-      return name.includes(query) || email.includes(query);
-    });
-  }, [agents, searchQuery]);
-
-  // Format agent name nicely
-  function formatAgentName(email?: string) {
-    if (!email) return 'Unknown Agent';
-    return email
-      .split('@')[0]
-      .replace(/_ext$/, '')
-      .replace(/[._]/g, ' ')
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ');
-  }
 
   const formatTime = (seconds: number | null) => {
     if (seconds === null || seconds === undefined) return '-';
@@ -101,11 +77,9 @@ export default function DashboardPage() {
     return `${(num / 3600).toFixed(1)}h`;
   };
 
-  const isLoading = datesLoading || agentsLoading || insightsLoading;
+  const isLoading = datesLoading || insightsLoading;
   const hasNoDashboardData =
     !isLoading &&
-    !searchQuery &&
-    agents.length === 0 &&
     topIssues.length === 0 &&
     bestAgents.length === 0 &&
     frustratedCustomers.length === 0;
@@ -259,26 +233,13 @@ export default function DashboardPage() {
               ) : (
                 <div className="space-y-2">
                   {bestAgents.map((agent: any, idx: number) => (
-                    <Link
-                      key={agent.agentEmail}
-                      to={`/agent/${encodeURIComponent(agent.agentEmail)}?date=${effectiveDate}&dateMode=${dateMode}`}
-                      className="flex items-center justify-between p-2 rounded-lg bg-slate-100 hover:bg-slate-200 transition-all"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="w-5 h-5 rounded-full bg-uh-warning/20 text-uh-warning text-xs flex items-center justify-center font-bold">
-                          {idx + 1}
-                        </span>
-                        <span className="text-sm truncate">
-                          {formatAgentName(agent.agentEmail)}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-slate-500">{agent.totalTickets} tickets</span>
-                        <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-uh-success/20 text-uh-success">
-                          {agent.avgCsat}
-                        </span>
-                      </div>
-                    </Link>
+                    <BestAgentRow 
+                      key={agent.agentEmail} 
+                      agent={agent} 
+                      idx={idx} 
+                      effectiveDate={effectiveDate} 
+                      dateMode={dateMode} 
+                    />
                   ))}
                 </div>
               )}
@@ -321,70 +282,85 @@ export default function DashboardPage() {
           {/* Daily Audit Section */}
           {effectiveDate && <DailyAuditSection date={effectiveDate} dateMode={dateMode} />}
 
-          {/* Agent List */}
-          <div className="card">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Agents ({filteredAgents.length})</h2>
-              {/* Search Bar */}
-              <div className="relative">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search agents..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 pr-4 py-2 rounded-xl bg-slate-50 text-sm focus:outline-none focus:bg-white shadow-elevation-1 focus:shadow-elevation-2 w-64 transition-all duration-md3 ease-md3"
-                />
+          {/* Browse agents CTA — agent list lives on the Tickets tab */}
+          <Link
+            to={`/tickets?date=${effectiveDate}&dateMode=${dateMode}`}
+            className="card flex items-center justify-between bg-gradient-to-r from-uh-purple/5 to-uh-cyan/5 hover:from-uh-purple/10 hover:to-uh-cyan/10 transition-all group"
+          >
+            <div className="flex items-center gap-4">
+              <div className="p-3 rounded-xl bg-uh-purple/15 text-uh-purple">
+                <Inbox size={22} />
+              </div>
+              <div>
+                <p className="font-semibold">Browse Agents & Tickets</p>
+                <p className="text-sm text-slate-500">{summary.activeAgents || 0} agents · {summary.totalTickets || 0} tickets today</p>
               </div>
             </div>
+            <ChevronRight size={20} className="text-slate-400 group-hover:text-uh-purple group-hover:translate-x-1 transition-all" />
+          </Link>
 
-            {filteredAgents.length === 0 ? (
-              <div className="text-center py-12 space-y-2">
-                <p className="text-slate-400">
-                  {searchQuery ? 'No agents match your search' : 'No agents found for this date'}
-                </p>
-                {hasNoDashboardData && (
-                  <p className="text-sm text-slate-500 max-w-xl mx-auto">
-                    The app is running, but your local backend does not have ticket data yet. Add your Turso credentials or load local data into `backend/dev.db` to populate the dashboard.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {filteredAgents.map((agent: any) => (
-                  <Link
-                    key={agent.agentEmail}
-                    to={`/agent/${encodeURIComponent(agent.agentEmail)}?date=${effectiveDate}&dateMode=${dateMode}`}
-                    className="flex items-center justify-between p-4 rounded-xl bg-white shadow-elevation-1 hover:shadow-elevation-2 transition-all duration-md3 ease-md3 group"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-uh-purple flex items-center justify-center text-white font-bold">
-                        {formatAgentName(agent.agentEmail).charAt(0)}
-                      </div>
-                      <div>
-                        <p className="font-medium">{formatAgentName(agent.agentEmail)}</p>
-                        <div className="flex items-center gap-2 text-xs text-slate-500">
-                          <span>{agent.totalTickets} tickets</span>
-                          {agent.avgCsat && (
-                            <>
-                              <span>•</span>
-                              <span className={agent.avgCsat >= 4 ? 'text-uh-success' : agent.avgCsat < 3 ? 'text-uh-error' : ''}>
-                                CSAT: {agent.avgCsat}
-                              </span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <ChevronRight size={20} className="text-slate-400 group-hover:text-uh-purple transition-colors" />
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
+          {hasNoDashboardData && (
+            <p className="text-sm text-slate-500 text-center mt-6 max-w-xl mx-auto">
+              The app is running, but your local backend does not have ticket data yet. Add your Turso credentials or load local data into backend/dev.db to populate the dashboard.
+            </p>
+          )}
         </>
       )}
     </div>
+  );
+}
+
+function BestAgentRow({ agent, idx, effectiveDate, dateMode }: { 
+  agent: any, 
+  idx: number, 
+  effectiveDate: string, 
+  dateMode: string 
+}) {
+  const { data: trendData } = useQuery({
+    queryKey: ['agent-qa-trend', agent.agentEmail],
+    queryFn: () => agentsApi.getQATrend(agent.agentEmail, 7),
+    staleTime: 1000 * 60 * 10,
+  });
+
+  const trend = trendData?.data?.trend || [];
+
+  function formatAgentName(email?: string) {
+    if (!email) return 'Unknown Agent';
+    return email
+      .split('@')[0]
+      .replace(/_ext$/, '')
+      .replace(/[._]/g, ' ')
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  }
+
+  return (
+    <Link
+      to={`/agent/${encodeURIComponent(agent.agentEmail)}?date=${effectiveDate}&dateMode=${dateMode}`}
+      className="flex items-center justify-between p-2 rounded-lg bg-slate-100 hover:bg-slate-200 transition-all group"
+    >
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        <span className="w-5 h-5 rounded-full bg-uh-warning/20 text-uh-warning text-xs flex items-center justify-center font-bold shrink-0">
+          {idx + 1}
+        </span>
+        <div className="min-w-0">
+          <p className="text-sm truncate font-medium">
+            {formatAgentName(agent.agentEmail)}
+          </p>
+          <p className="text-[10px] text-slate-400">{agent.totalTickets} tickets</p>
+        </div>
+      </div>
+      
+      <div className="flex items-center gap-3 shrink-0">
+        <div className="w-12 h-6 opacity-60 group-hover:opacity-100 transition-opacity">
+          <AgentTrendSparkline data={trend} height={24} />
+        </div>
+        <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-uh-success/20 text-uh-success min-w-[32px] text-center">
+          {agent.avgCsat}
+        </span>
+      </div>
+    </Link>
   );
 }
 
@@ -413,29 +389,43 @@ type DailyPickRow = {
 function DailyAuditSection({ date, dateMode }: { date: string; dateMode: DateMode }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [isPolling, setIsPolling] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
 
+  // Always poll status — keeps UI in sync even if audit was triggered elsewhere
+  const { data: statusData } = useQuery({
+    queryKey: ['daily-picks-status', date, dateMode],
+    queryFn: () => dailyPicksApi.getStatus(date, dateMode),
+    enabled: !!date,
+    refetchInterval: (query) => {
+      const s = (query.state.data as any)?.data;
+      return s?.inProgress ? 2000 : 15000; // 2s while running, 15s idle
+    },
+  });
+
+  const inProgress = statusData?.data?.inProgress || false;
+
+  // Picks data — refetch frequently while audit is running
   const { data: picksData, isLoading: picksLoading } = useQuery({
     queryKey: ['daily-picks', date, dateMode],
     queryFn: () => dailyPicksApi.getPicks(date, dateMode),
     enabled: !!date,
-    staleTime: 1000 * 30,
-  });
-
-  const { data: statusData } = useQuery({
-    queryKey: ['daily-picks-status', date, dateMode],
-    queryFn: () => dailyPicksApi.getStatus(date, dateMode),
-    enabled: !!date && isPolling,
-    refetchInterval: isPolling ? 3000 : false,
+    staleTime: inProgress ? 0 : 1000 * 30,
+    refetchInterval: inProgress ? 3000 : false,
   });
 
   const runAudit = useMutation({
     mutationFn: () => dailyPicksApi.runAudit(date, dateMode),
     onSuccess: () => {
-      setIsPolling(true);
       queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode] });
       queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] });
+    },
+  });
+
+  const resetPicks = useMutation({
+    mutationFn: () => api.delete(`/daily-picks/reset?date=${date}&dateMode=${dateMode}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] });
+      queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode] });
     },
   });
 
@@ -452,17 +442,7 @@ function DailyAuditSection({ date, dateMode }: { date: string; dateMode: DateMod
   const totalPicks = picks?.totalPicks || 0;
   const analyzed = status?.analyzed ?? picks?.picks?.filter((pick: DailyPickRow) => pick.analyzed).length ?? 0;
   const errors = status?.errors || 0;
-  const inProgress = status?.inProgress || false;
   const progressPct = totalPicks > 0 ? Math.round((analyzed / totalPicks) * 100) : 0;
-
-  // Stop polling when audit completes
-  useEffect(() => {
-    if (isPolling && status && !status.inProgress) {
-      setIsPolling(false);
-      queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] });
-      queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode] });
-    }
-  }, [status, isPolling, date, dateMode, queryClient]);
 
   if (picksLoading) return null;
 
@@ -477,17 +457,28 @@ function DailyAuditSection({ date, dateMode }: { date: string; dateMode: DateMod
               : 'Generate random ticket picks for QA review'}
           </p>
         </div>
-        <button
-          onClick={() => runAudit.mutate()}
-          disabled={runAudit.isPending || inProgress}
-          className="btn-primary flex items-center gap-2 text-sm !px-4 !py-2.5"
-        >
-          {runAudit.isPending || inProgress ? (
-            <><Loader2 size={16} className="animate-spin" /> Running...</>
-          ) : (
-            <><Play size={16} /> {totalPicks > 0 ? 'Re-run Audit' : 'Run Daily Audit'}</>
+        <div className="flex items-center gap-2">
+          {totalPicks > 0 && !inProgress && (
+            <button
+              onClick={() => { if (confirm('Reset picks and regenerate with current settings?')) resetPicks.mutate(); }}
+              disabled={resetPicks.isPending}
+              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors"
+            >
+              <RefreshCw size={14} /> Reset
+            </button>
           )}
-        </button>
+          <button
+            onClick={() => runAudit.mutate()}
+            disabled={runAudit.isPending || inProgress}
+            className="btn-primary flex items-center gap-2 text-sm !px-4 !py-2.5"
+          >
+            {runAudit.isPending || inProgress ? (
+              <><Loader2 size={16} className="animate-spin" /> Running...</>
+            ) : (
+              <><Play size={16} /> {totalPicks > 0 ? 'Re-run Audit' : 'Run Daily Audit'}</>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Progress Bar */}
@@ -499,10 +490,18 @@ function DailyAuditSection({ date, dateMode }: { date: string; dateMode: DateMod
           </div>
           <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
             <div
-              className="h-full bg-uh-purple rounded-full transition-all duration-500 ease-md3"
+              className={`h-full rounded-full transition-all duration-500 ease-md3 ${
+                progressPct === 100 ? 'bg-uh-success' : 'bg-uh-purple'
+              }`}
               style={{ width: `${progressPct}%` }}
             />
           </div>
+          {progressPct === 100 && (
+            <div className="mt-2 flex items-center gap-1.5 text-uh-success text-[10px] font-bold uppercase tracking-wider animate-in fade-in slide-in-from-top-1 duration-500">
+              <CheckCircle2 size={12} />
+              Daily Audit Complete
+            </div>
+          )}
         </div>
       )}
 
@@ -519,8 +518,11 @@ function DailyAuditSection({ date, dateMode }: { date: string; dateMode: DateMod
                 onClick={() => setSelectedAgent(email)}
                 className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 hover:bg-slate-100 hover:shadow-elevation-1 transition-all duration-md3 ease-md3 text-left"
               >
-                <div className="w-7 h-7 rounded-full bg-uh-purple/10 text-uh-purple flex items-center justify-center text-xs font-bold">
-                  {name.charAt(0).toUpperCase()}
+                <div
+                  className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
+                  style={{ background: getAvatarColor(name).bg, color: getAvatarColor(name).fg }}
+                >
+                  {getAvatarInitial(name)}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium truncate">{name}</p>
@@ -616,6 +618,15 @@ function AnalyzedTicketsModal({
                       <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
                         #{pick.pickOrder}
                       </span>
+                      {pick.pickReason && (
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                          pick.pickReason === 'High Risk'
+                            ? 'bg-uh-error/10 text-uh-error border border-uh-error/20'
+                            : 'bg-uh-cyan/10 text-uh-cyan border border-uh-cyan/20'
+                        }`}>
+                          {pick.pickReason} {pick.riskScore > 0 ? `(${pick.riskScore})` : ''}
+                        </span>
+                      )}
                       {pick.ticket?.status && (
                         <span className={`text-xs px-2 py-0.5 rounded-full ${
                           pick.ticket.status === 'RESOLVED'

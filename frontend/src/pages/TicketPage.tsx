@@ -66,6 +66,20 @@ interface QAAnalysis {
   summary: string;
 }
 
+interface AuditMemory {
+  memoryKey: string;
+  customerEmail: string;
+  issueSignature: string;
+  lastTicketDate: string;
+  totalSeen: number;
+  missedSteps: string | null;
+  suggestions: string | null;
+  qaScore: number | null;
+  repeatIssue: boolean;
+  customerExperience: string | null;
+  resolutionState: string | null;
+}
+
 function parseMessages(messagesJson: string): ParsedMessage[] {
   try {
     const messages = JSON.parse(messagesJson || '[]');
@@ -139,6 +153,7 @@ export default function TicketPage() {
   const { id } = useParams<{ id: string }>();
   const [analysis, setAnalysis] = useState<QAAnalysis | null>(null);
   const [customerHistory, setCustomerHistory] = useState<CustomerTicketHistory[]>([]);
+  const [auditMemories, setAuditMemories] = useState<AuditMemory[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [review, setReview] = useState<QAReview | null>(null);
@@ -160,12 +175,68 @@ export default function TicketPage() {
   const ticket = ticketData?.data?.ticket;
   const messages = ticket?.MESSAGES_JSON ? parseMessages(ticket.MESSAGES_JSON) : [];
 
-  // Auto-analyze when ticket loads
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input or textarea
+      if (
+        e.target instanceof HTMLInputElement || 
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
+      ) {
+        // Special case: Enter submits the review if focused on inputs
+        if (e.key === 'Enter' && pendingStatus) {
+          handleSubmitReview();
+        }
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+
+      if (key === 'a' && analysis) {
+        e.preventDefault();
+        openReviewModal('approved');
+      } else if (key === 'f' && analysis) {
+        e.preventDefault();
+        openReviewModal('flagged');
+      } else if (key === 'r') {
+        e.preventDefault();
+        handleAnalyze(true);
+      } else if (key === 'escape') {
+        if (pendingStatus) {
+          setPendingStatus(null);
+        } else {
+          window.history.back();
+        }
+      } else if (key === 'b') {
+        window.history.back();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [analysis, pendingStatus, reviewerName, noteInput, id]);
+
+  // On load: only fetch cached/DB analysis — never trigger Gemini automatically
   useEffect(() => {
     if (!ticket || analysis || isAnalyzing) return;
-    handleAnalyze(false);
+    loadCachedAnalysis();
   }, [ticket]);
 
+  const loadCachedAnalysis = async () => {
+    if (!id) return;
+    try {
+      const response = await analysisApi.getTicketAnalysis(id, false, true);
+      if (response.data.analysis) {
+        setAnalysis(response.data.analysis);
+        setCustomerHistory(response.data.customerHistory || []);
+        setAuditMemories(response.data.auditMemories || []);
+      }
+      setReview(response.data.review || null);
+    } catch { /* no cached analysis — that's fine */ }
+  };
+
+  // Explicit button click: triggers Gemini analysis
   const handleAnalyze = async (forceRefresh = true) => {
     if (!id) return;
     setIsAnalyzing(true);
@@ -174,6 +245,7 @@ export default function TicketPage() {
       const response = await analysisApi.getTicketAnalysis(id, forceRefresh);
       setAnalysis(response.data.analysis);
       setCustomerHistory(response.data.customerHistory || []);
+      setAuditMemories(response.data.auditMemories || []);
       setReview(response.data.review || null);
     } catch (error: any) {
       setAnalysisError(error.response?.data?.error || 'Failed to analyze ticket');
@@ -345,6 +417,7 @@ export default function TicketPage() {
               Analyze with AI
             </>
           )}
+          <span className="ml-1 text-[10px] opacity-60 font-mono">[R]</span>
         </button>
       </div>
 
@@ -406,6 +479,7 @@ export default function TicketPage() {
                       <ThumbsUp size={14} />
                     )}
                     {review?.status === 'approved' ? 'Undo' : 'Approve'}
+                    <span className="ml-1 text-[10px] opacity-60 font-mono">[A]</span>
                   </button>
                   <button
                     onClick={() => openReviewModal('flagged')}
@@ -425,6 +499,7 @@ export default function TicketPage() {
                       <Flag size={14} />
                     )}
                     {review?.status === 'flagged' ? 'Undo' : 'Flag'}
+                    <span className="ml-1 text-[10px] opacity-60 font-mono">[F]</span>
                   </button>
                 </div>
                 <div className={`text-4xl font-bold ${getScoreColor(analysis.qaScore)}`}>
@@ -776,9 +851,71 @@ export default function TicketPage() {
           </div>
         </div>
 
-        {/* Right: Ticket Info */}
+        {/* Right: Ticket Info & Audit Memories */}
         <div className="space-y-6">
-          <div className="card">
+          {/* Audit Memories / Coaching Patterns */}
+          {auditMemories.length > 0 && (
+            <div className="card border-uh-purple/30 bg-uh-purple/5">
+              <h2 className="text-lg font-semibold mb-3 flex items-center gap-2 text-uh-purple">
+                <History size={20} />
+                Historical Patterns
+              </h2>
+              <div className="space-y-4">
+                {auditMemories.map((memory) => {
+                  const missedStepsArr = memory.missedSteps ? memory.missedSteps.split(' | ') : [];
+                  // Logic to highlight if current audit has same missed steps
+                  const currentMissed = analysis?.sopCompliance?.missedSteps || [];
+                  const repetitiveSteps = missedStepsArr.filter(step => currentMissed.includes(step));
+
+                  return (
+                    <div key={memory.memoryKey} className="p-3 bg-white rounded-xl border border-uh-purple/10 shadow-sm">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400">
+                          {memory.issueSignature.replace('|', ' · ')}
+                        </span>
+                        <span className="text-xs text-uh-purple font-medium">
+                          {memory.totalSeen}x seen
+                        </span>
+                      </div>
+
+                      {repetitiveSteps.length > 0 && (
+                        <div className="mb-3 p-2 rounded-lg bg-uh-error/10 border border-uh-error/20">
+                          <p className="text-xs font-bold text-uh-error mb-1 flex items-center gap-1">
+                            <AlertTriangle size={12} />
+                            REPETITIVE COACHING NEED
+                          </p>
+                          <ul className="text-xs text-uh-error/80 space-y-0.5">
+                            {repetitiveSteps.map(s => <li key={s}>• {s}</li>)}
+                          </ul>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-2 text-[11px] mb-2">
+                        <div className="bg-slate-50 p-1.5 rounded">
+                          <span className="text-slate-400 block">Last QA</span>
+                          <span className={`font-bold ${memory.qaScore && memory.qaScore < 80 ? 'text-uh-error' : 'text-uh-success'}`}>
+                            {memory.qaScore || 'N/A'}/100
+                          </span>
+                        </div>
+                        <div className="bg-slate-50 p-1.5 rounded">
+                          <span className="text-slate-400 block">Experience</span>
+                          <span className="font-medium capitalize">{memory.customerExperience || 'Unknown'}</span>
+                        </div>
+                      </div>
+
+                      {memory.resolutionState && (
+                        <p className="text-[11px] text-slate-500 italic line-clamp-2">
+                          "{memory.resolutionState}: {memory.suggestions?.split(' | ')[0]}"
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="card shadow-elevation-1">
             <h2 className="text-lg font-semibold mb-4">Ticket Details</h2>
             <div className="space-y-4 text-sm">
               <div className="flex justify-between items-center py-2 border-b border-slate-200">

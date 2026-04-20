@@ -1,35 +1,172 @@
-import { useParams, useSearchParams, Link } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Mail, Ticket, Clock, CheckCircle, AlertTriangle, Calendar, CalendarCheck, ThumbsUp, Flag, Skull, Sparkles, Loader2 } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Calendar,
+  CalendarCheck,
+  CheckCircle,
+  Copy,
+  ChevronDown,
+  Clock,
+  Download,
+  FileText,
+  Flag,
+  Layers3,
+  Loader2,
+  Mail,
+  Skull,
+  Sparkles,
+  ThumbsUp,
+  Ticket,
+  TrendingDown,
+} from 'lucide-react';
 import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { agentsApi, analysisApi } from '../api/client';
+import { agentsApi, analysisApi, dailyPicksApi } from '../api/client';
 import type { DateMode } from '../api/client';
+import AgentTrendSparkline from '../components/agent/AgentTrendSparkline';
+import { useDateStore } from '../store/dateStore';
+import { getAvatarColor, getAvatarInitial } from '../utils/avatarColors';
+
+interface AgentTicketRow {
+  TICKET_ID: string;
+  SUBJECT: string;
+  VISITOR_EMAIL: string;
+  TICKET_STATUS: string;
+  FIRST_RESPONSE_DURATION_SECONDS: number | null;
+  TICKET_CSAT: number | string | null;
+}
 
 interface ScoreEntry {
   qaScore: number;
   summary: string | null;
   deductions: Array<{ category: string; points: number; reason: string }>;
 }
+
+interface QAReview {
+  status: 'approved' | 'flagged';
+  note: string | null;
+  reviewerName?: string | null;
+  reviewedAt?: string;
+}
+
+interface AgentDailyPick {
+  ticketId: string;
+  agentEmail: string;
+  pickOrder: number;
+  pickReason?: string | null;
+  analyzed: boolean;
+  analysisStatus?: string | null;
+  riskScore?: number | null;
+  ticket?: {
+    subject: string | null;
+    customerEmail: string | null;
+    status: string | null;
+    groupName: string | null;
+    responseTimeSeconds: number | null;
+    hasStoredAnalysis: boolean;
+  } | null;
+}
+
+interface ReportCard {
+  overallAssessment: string;
+  summary: string;
+  sample: {
+    requiredCount: number;
+    auditedCount: number;
+    reviewedCount: number;
+    approvedCount: number;
+    flaggedCount: number;
+    avgQaScore: number;
+  };
+  dailyPerformance: {
+    totalTickets: number;
+    resolvedCount: number;
+    avgResponseTime: number | null;
+    lowCsatCount: number;
+  };
+  strengths: string[];
+  coachingPriorities: string[];
+  topDeductionCategories: Array<{ category: string; label: string; count: number }>;
+  topIssues: Array<{ subject: string; count: number }>;
+  flaggedTickets: Array<{
+    ticketId: string;
+    subject: string;
+    qaScore: number | null;
+    reviewNote: string | null;
+    deductionSummary: string | null;
+  }>;
+  reviewedSample: Array<{
+    ticketId: string;
+    pickOrder: number;
+    pickReason: string | null;
+    subject: string | null;
+    qaScore: number | null;
+    reviewStatus: string | null;
+    reviewNote: string | null;
+  }>;
+}
+
+function formatTime(seconds: number | null) {
+  if (seconds === null || seconds === undefined) return '-';
+  const num = Number(seconds);
+  if (Number.isNaN(num) || !Number.isFinite(num) || num <= 0 || num > 86400) return '-';
+  if (num < 60) return `${Math.round(num)}s`;
+  if (num < 3600) return `${Math.round(num / 60)}m`;
+  return `${(num / 3600).toFixed(1)}h`;
+}
+
+function isResolvedStatus(status: unknown) {
+  return String(status || '').trim().toLowerCase() === 'resolved';
+}
+
+function formatAgentName(email?: string) {
+  if (!email) return 'Unknown Agent';
+  return email
+    .split('@')[0]
+    .replace(/_ext$/, '')
+    .replace(/[._]/g, ' ')
+    .split(' ')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
 export default function AgentDetailPage() {
   const { email } = useParams<{ email: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
+  const [reportCard, setReportCard] = useState<ReportCard | null>(null);
+  const [copySuccess, setCopySuccess] = useState(false);
+  const { selectedDate, setSelectedDate, dateMode: storeDateMode, setDateMode: setStoreDateMode } = useDateStore();
 
-  // Fetch available dates to get a valid fallback
   const { data: datesData } = useQuery({
     queryKey: ['dates'],
     queryFn: () => agentsApi.getDates(),
     staleTime: 1000 * 60 * 60,
   });
   const latestDate = datesData?.data?.dates?.[0] || '';
-  const date = searchParams.get('date') || latestDate;
-  const dateMode = (searchParams.get('dateMode') as DateMode) || 'activity';
+
+  const urlDate = searchParams.get('date');
+  const urlDateMode = searchParams.get('dateMode') as DateMode;
+  const date = urlDate || selectedDate || latestDate;
+  const dateMode = urlDateMode || storeDateMode || 'activity';
+
+  useEffect(() => {
+    if (urlDate && urlDate !== selectedDate) setSelectedDate(urlDate);
+    if (urlDateMode && urlDateMode !== storeDateMode) setStoreDateMode(urlDateMode);
+  }, [urlDate, urlDateMode, selectedDate, storeDateMode, setSelectedDate, setStoreDateMode]);
+
+  useEffect(() => {
+    if (!selectedDate && latestDate && !urlDate) {
+      setSelectedDate(latestDate);
+    }
+  }, [latestDate, selectedDate, urlDate, setSelectedDate]);
 
   const decodedEmail = decodeURIComponent(email || '');
   const agentName = decodedEmail.split('@')[0].replace(/[._]/g, ' ').replace(/_ext$/, '');
 
-  // Fetch agent's tickets
   const { data: ticketsData, isLoading: ticketsLoading } = useQuery({
     queryKey: ['agent-tickets', decodedEmail, date, dateMode],
     queryFn: () => agentsApi.getTickets(decodedEmail, date, 500, dateMode),
@@ -38,245 +175,284 @@ export default function AgentDetailPage() {
     gcTime: 1000 * 60 * 60,
   });
 
-  const handleDateChange = (newDate: string) => {
-    setSearchParams({ date: newDate, dateMode });
-  };
+  const { data: picksData } = useQuery({
+    queryKey: ['daily-picks', date, dateMode],
+    queryFn: () => dailyPicksApi.getPicks(date, dateMode).then((response) => response.data),
+    enabled: !!date,
+    staleTime: 0,
+    refetchOnMount: 'always',
+  });
 
-  const handleDateModeChange = (newMode: DateMode) => {
-    setSearchParams({ date, dateMode: newMode });
-  };
+  const tickets: AgentTicketRow[] = ticketsData?.data?.tickets || [];
+  const ticketIds = tickets.map((ticket) => String(ticket.TICKET_ID));
 
-  const tickets = ticketsData?.data?.tickets || [];
-
-  // Fetch review statuses for all loaded tickets
-  const ticketIds = tickets.map((t: any) => String(t.TICKET_ID));
   const { data: reviewsData } = useQuery({
     queryKey: ['reviews', ticketIds.join(',')],
     queryFn: () => analysisApi.getReviews(ticketIds),
     enabled: ticketIds.length > 0,
-    staleTime: 1000 * 60 * 5,
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
-  const reviews: Record<string, { status: string; note: string | null }> = reviewsData?.data?.reviews || {};
+  const reviews: Record<string, QAReview> = reviewsData?.data?.reviews || {};
 
-  const [qcRunning, setQcRunning] = useState(false);
-  const [qcProgress, setQcProgress] = useState<{ done: number; total: number } | null>(null);
-
-  // Fetch cached QA scores for all loaded tickets.
-  // Poll every 8s until all tickets have scores — this way every user (not just
-  // the one who clicked Run QC) sees scores appear as they are computed.
   const { data: scoresData } = useQuery({
     queryKey: ['cached-scores', ticketIds.join(',')],
     queryFn: () => analysisApi.getCachedScores(ticketIds),
     enabled: ticketIds.length > 0,
     staleTime: 0,
-    refetchInterval: (query) => {
-      const scores = (query.state.data as any)?.data?.scores || {};
-      const scored = Object.keys(scores).length;
-      // Stop polling once every ticket has a score
-      return scored < ticketIds.length ? 8000 : false;
-    },
+    refetchOnMount: 'always',
   });
   const cachedScores: Record<string, ScoreEntry> = scoresData?.data?.scores || {};
-  // True only once the scores query has actually resolved (not just "not loading")
-  const scoresReady = scoresData !== undefined;
 
-  // Bulk QC analysis state
-  const queryClient = useQueryClient();
-  // Track which (email, date, dateMode) combos have been auto-triggered so we don't repeat
-  const autoTriggeredKey = useRef('');
+  const { data: insightsData } = useQuery({
+    queryKey: ['agent-insights', decodedEmail, date, dateMode],
+    queryFn: () => analysisApi.getAgentInsights(decodedEmail, date, dateMode),
+    enabled: !!decodedEmail && !!date,
+    staleTime: 1000 * 60,
+  });
+  const insightsResult = insightsData?.data;
 
-  const CHUNK_SIZE = 8;
+  const { data: trendData } = useQuery({
+    queryKey: ['agent-qa-trend', decodedEmail],
+    queryFn: () => agentsApi.getQATrend(decodedEmail, 30),
+    enabled: !!decodedEmail,
+    staleTime: 1000 * 60 * 5,
+  });
+  const trend = trendData?.data?.trend || [];
 
-  const runBulkQC = async (forceRefresh = false) => {
-    if (tickets.length === 0 || qcRunning) return;
-    setQcRunning(true);
-    setQcProgress(null);
-
-    const allIds = tickets.map((t: any) => String(t.TICKET_ID));
-    const chunks: string[][] = [];
-    for (let i = 0; i < allIds.length; i += CHUNK_SIZE) {
-      chunks.push(allIds.slice(i, i + CHUNK_SIZE));
-    }
-
-    setQcProgress({ done: 0, total: allIds.length });
-
-    const scoresKey = ['cached-scores', allIds.join(',')];
-
-    for (const chunk of chunks) {
-      try {
-        const resp = await analysisApi.batchAnalyze(date, undefined, chunk.length, dateMode, chunk, forceRefresh);
-        const results: any[] = resp.data?.results || [];
-
-        // Directly update the scores cache from the batch response — avoids
-        // a stale-cache roundtrip and shows scores immediately after each chunk.
-        queryClient.setQueryData(scoresKey, (old: any) => {
-          const existing: Record<string, ScoreEntry> = old?.data?.scores || {};
-          const merged = { ...existing };
-          results.forEach((r: any) => {
-            if (r.analysis?.qaScore !== undefined) {
-              merged[String(r.ticketId)] = {
-                qaScore: r.analysis.qaScore,
-                summary: r.analysis.summary ?? null,
-                deductions: r.analysis.deductions ?? [],
-              };
-            }
-          });
-          return { ...(old ?? {}), data: { scores: merged } };
-        });
-      } catch (err) {
-        console.error('QC chunk failed:', err);
-      }
-      setQcProgress(prev => ({ done: Math.min((prev?.done ?? 0) + chunk.length, allIds.length), total: allIds.length }));
-    }
-
-    setQcRunning(false);
-    setQcProgress(null);
+  const handleDateChange = (newDate: string) => {
+    setSearchParams({ date: newDate, dateMode });
+    setSelectedDate(newDate);
+    setReportCard(null);
   };
 
-  // Auto-trigger QC analysis when the page loads and the scores query has resolved with no data
-  const currentKey = `${decodedEmail}:${date}:${dateMode}`;
-  useEffect(() => {
-    if (
-      !ticketsLoading &&
-      scoresReady &&           // scores query actually completed (not just "not loading")
-      !qcRunning &&
-      tickets.length > 0 &&
-      Object.keys(cachedScores).length === 0 &&
-      autoTriggeredKey.current !== currentKey
-    ) {
-      autoTriggeredKey.current = currentKey;
-      runBulkQC(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticketsLoading, scoresReady, currentKey]);
+  const handleDateModeChange = (newMode: DateMode) => {
+    setSearchParams({ date, dateMode: newMode });
+    setStoreDateMode(newMode);
+    setReportCard(null);
+  };
 
-  // Calculate stats
+  const allAgentPicks: AgentDailyPick[] = (picksData?.picks || []).filter(
+    (pick: AgentDailyPick) => pick.agentEmail === decodedEmail
+  );
+  const samplePicks = [...allAgentPicks].sort((left, right) => left.pickOrder - right.pickOrder);
+  const sampleIdSet = new Set(samplePicks.map((pick) => String(pick.ticketId)));
+
+  const sampleRows = samplePicks.map((pick) => {
+    const ticket = tickets.find((candidate) => String(candidate.TICKET_ID) === String(pick.ticketId));
+    return {
+      pick,
+      ticket,
+      score: cachedScores[String(pick.ticketId)],
+      review: reviews[String(pick.ticketId)],
+    };
+  });
+
+  const otherResolvedTickets = tickets.filter((ticket) => (
+    isResolvedStatus(ticket.TICKET_STATUS) && !sampleIdSet.has(String(ticket.TICKET_ID))
+  ));
+
   const totalTickets = tickets.length;
-  const resolvedCount = tickets.filter((t: any) => t.TICKET_STATUS === 'RESOLVED').length;
-
-  // Calculate avg response time, filtering out invalid values
-  const validResponseTimes: number[] = tickets
-    .map((t: any) => {
-      const val = Number(t.FIRST_RESPONSE_DURATION_SECONDS);
-      return isNaN(val) ? null : val;
-    })
-    .filter((t: number | null): t is number => t !== null && t > 0 && t < 86400); // 0 < t < 24 hours
+  const resolvedCount = tickets.filter((ticket) => isResolvedStatus(ticket.TICKET_STATUS)).length;
+  const validResponseTimes = tickets
+    .map((ticket) => Number(ticket.FIRST_RESPONSE_DURATION_SECONDS))
+    .filter((value) => Number.isFinite(value) && value > 0 && value < 86400);
   const avgResponseTime = validResponseTimes.length > 0
-    ? Math.round(validResponseTimes.reduce((a: number, b: number) => a + b, 0) / validResponseTimes.length)
+    ? Math.round(validResponseTimes.reduce((sum, value) => sum + value, 0) / validResponseTimes.length)
     : null;
+  const lowCsatCount = tickets.filter((ticket) => {
+    const numericCsat = Number(ticket.TICKET_CSAT);
+    return Number.isFinite(numericCsat) && numericCsat > 0 && numericCsat < 3;
+  }).length;
 
-  const lowCsatCount = tickets.filter((t: any) => t.TICKET_CSAT && t.TICKET_CSAT > 0 && t.TICKET_CSAT < 3).length;
-
-  // Group by subject for issue breakdown
-  const issueBreakdown = tickets.reduce((acc: Record<string, number>, t: any) => {
-    const subject = t.SUBJECT || 'Unknown';
+  const issueBreakdown = tickets.reduce<Record<string, number>>((acc, ticket) => {
+    const subject = ticket.SUBJECT || 'Unknown';
     acc[subject] = (acc[subject] || 0) + 1;
     return acc;
   }, {});
-
   const sortedIssues = Object.entries(issueBreakdown)
-    .sort((a, b) => (b[1] as number) - (a[1] as number))
+    .sort((left, right) => right[1] - left[1])
     .slice(0, 15) as [string, number][];
 
-  const formatTime = (seconds: number | null) => {
-    if (seconds === null || seconds === undefined) return '-';
-    const num = Number(seconds);
-    if (isNaN(num) || !isFinite(num) || num <= 0 || num > 86400) return '-';
-    if (num < 60) return `${Math.round(num)}s`;
-    if (num < 3600) return `${Math.round(num / 60)}m`;
-    return `${(num / 3600).toFixed(1)}h`;
+  const sampleAuditedCount = sampleRows.filter((row) => row.score).length;
+  const sampleReviewedCount = sampleRows.filter((row) => row.review).length;
+  const sampleApprovedCount = sampleRows.filter((row) => row.review?.status === 'approved').length;
+  const sampleFlaggedCount = sampleRows.filter((row) => row.review?.status === 'flagged').length;
+  const reportReady = sampleRows.length > 0 && sampleRows.every((row) => row.score && row.review);
+
+  const auditSampleMutation = useMutation({
+    mutationFn: async () => {
+      const sampleTicketIds = sampleRows.map((row) => String(row.pick.ticketId));
+      return analysisApi.batchAnalyze(date, decodedEmail, sampleTicketIds.length, dateMode, sampleTicketIds);
+    },
+    onSuccess: async () => {
+      setReportCard(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] }),
+        queryClient.invalidateQueries({ queryKey: ['cached-scores', ticketIds.join(',')] }),
+        queryClient.invalidateQueries({ queryKey: ['agent-insights', decodedEmail, date, dateMode] }),
+      ]);
+    },
+  });
+
+  const reportCardMutation = useMutation({
+    mutationFn: async () => {
+      const response = await agentsApi.getReportCard(decodedEmail, date, dateMode);
+      return response.data as ReportCard;
+    },
+    onSuccess: (data) => {
+      setReportCard(data);
+    },
+  });
+
+  const buildReportCardMarkdown = (card: ReportCard) => {
+    const lines = [
+      `# Daily QA Report Card`,
+      ``,
+      `- Agent: ${formatAgentName(decodedEmail)} (${decodedEmail})`,
+      `- Date: ${date}`,
+      `- Date Mode: ${dateMode}`,
+      `- Overall Assessment: ${card.overallAssessment}`,
+      ``,
+      `## Summary`,
+      card.summary,
+      ``,
+      `## Sample Metrics`,
+      `- Required Sample Size: ${card.sample.requiredCount}`,
+      `- Audited: ${card.sample.auditedCount}`,
+      `- Reviewed: ${card.sample.reviewedCount}`,
+      `- Approved: ${card.sample.approvedCount}`,
+      `- Flagged: ${card.sample.flaggedCount}`,
+      `- Average QA Score: ${card.sample.avgQaScore}`,
+      ``,
+      `## Daily Performance`,
+      `- Total Tickets: ${card.dailyPerformance.totalTickets}`,
+      `- Resolved Tickets: ${card.dailyPerformance.resolvedCount}`,
+      `- Average Response Time: ${formatTime(card.dailyPerformance.avgResponseTime)}`,
+      `- Low CSAT Count: ${card.dailyPerformance.lowCsatCount}`,
+      ``,
+      `## Strengths`,
+      ...card.strengths.map((item) => `- ${item}`),
+      ``,
+      `## Coaching Priorities`,
+      ...card.coachingPriorities.map((item) => `- ${item}`),
+      ``,
+      `## Top Miss Categories`,
+      ...(card.topDeductionCategories.length > 0
+        ? card.topDeductionCategories.map((item) => `- ${item.label}: ${item.count}`)
+        : ['- None']),
+      ``,
+      `## Top Issues`,
+      ...(card.topIssues.length > 0
+        ? card.topIssues.map((item) => `- ${item.subject}: ${item.count}`)
+        : ['- None']),
+      ``,
+      `## Flagged Tickets`,
+      ...(card.flaggedTickets.length > 0
+        ? card.flaggedTickets.flatMap((item) => [
+            `- Ticket #${item.ticketId}: ${item.subject}`,
+            `  - QA Score: ${item.qaScore ?? '—'}`,
+            `  - Review Note: ${item.reviewNote || '—'}`,
+            `  - Deduction Summary: ${item.deductionSummary || '—'}`,
+          ])
+        : ['- None']),
+      ``,
+      `## Reviewed Sample`,
+      ...card.reviewedSample.flatMap((item) => [
+        `- Pick ${item.pickOrder} | Ticket #${item.ticketId} | ${item.subject || 'No subject'}`,
+        `  - Pick Reason: ${item.pickReason || '—'}`,
+        `  - QA Score: ${item.qaScore ?? '—'}`,
+        `  - Review Status: ${item.reviewStatus || '—'}`,
+        `  - Review Note: ${item.reviewNote || '—'}`,
+      ]),
+    ];
+
+    return lines.join('\n');
+  };
+
+  const handleDownloadReportCard = () => {
+    if (!reportCard) return;
+    const content = buildReportCardMarkdown(reportCard);
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${decodedEmail.split('@')[0]}-${date}-${dateMode}-report-card.md`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopyReportCard = async () => {
+    if (!reportCard) return;
+    try {
+      await navigator.clipboard.writeText(buildReportCardMarkdown(reportCard));
+      setCopySuccess(true);
+      window.setTimeout(() => setCopySuccess(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy report card:', error);
+    }
   };
 
   const ReviewBadge = ({ ticketId }: { ticketId: string }) => {
-    const r = reviews[ticketId] as any;
-    if (!r) return null;
+    const review = reviews[ticketId];
+    if (!review) return null;
+
     const tooltip = [
-      r.reviewerName ? `By: ${r.reviewerName}` : null,
-      r.note || null,
-    ].filter(Boolean).join(' · ') || (r.status === 'approved' ? 'Approved' : 'Flagged');
-    return r.status === 'approved' ? (
-      <span title={tooltip} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-uh-success/20 text-uh-success">
-        <ThumbsUp size={9} /> QC OK
+      review.reviewerName ? `By: ${review.reviewerName}` : null,
+      review.note || null,
+    ].filter(Boolean).join(' · ') || (review.status === 'approved' ? 'Approved' : 'Flagged');
+
+    return review.status === 'approved' ? (
+      <span title={tooltip} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-uh-success/20 text-uh-success">
+        <ThumbsUp size={10} /> QC OK
       </span>
     ) : (
-      <span title={tooltip} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-uh-error/20 text-uh-error">
-        <Flag size={9} /> Flagged
+      <span title={tooltip} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-uh-error/20 text-uh-error">
+        <Flag size={10} /> Flagged
       </span>
     );
   };
 
-  // QC Score column — score pill + per-category deduction breakdown
-  const QCScorePill = ({ ticketId }: { ticketId: string }) => {
-    const s = cachedScores[ticketId];
-    if (!s) return <span className="text-slate-300 text-sm">—</span>;
+  const ScorePill = ({ ticketId }: { ticketId: string }) => {
+    const score = cachedScores[ticketId];
+    if (!score) return <span className="text-slate-300 text-sm">—</span>;
 
     const scoreColor =
-      s.qaScore >= 80
+      score.qaScore >= 80
         ? 'bg-uh-success/20 text-uh-success'
-        : s.qaScore >= 60
+        : score.qaScore >= 60
         ? 'bg-uh-warning/20 text-uh-warning'
         : 'bg-uh-error/20 text-uh-error';
 
-    const deductionColor = (pts: number) =>
-      pts <= -40 ? 'bg-uh-error/20 text-uh-error' : 'bg-slate-100 text-slate-500';
-
     return (
-      <div className="flex flex-col gap-1 min-w-0">
-        <span
-          title={s.summary || ''}
-          className={`px-2 py-0.5 rounded-full text-xs font-semibold self-start ${scoreColor}`}
-        >
-          {Math.round(s.qaScore)}
-        </span>
-        {s.deductions && s.deductions.length > 0 && (
-          <div className="flex flex-col gap-0.5">
-            {s.deductions.map((d, i) => (
-              <span
-                key={i}
-                title={d.reason}
-                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${deductionColor(d.points)}`}
-              >
-                <span className="capitalize">{d.category}</span>
-                <span className="font-semibold">{d.points}</span>
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
+      <span title={score.summary || ''} className={`px-2 py-0.5 rounded-full text-xs font-semibold ${scoreColor}`}>
+        {Math.round(score.qaScore)}
+      </span>
     );
   };
 
-  // QC Review column — Fatal badge + manual review badge
-  const QCReviewCell = ({ ticketId }: { ticketId: string }) => {
-    const s = cachedScores[ticketId];
-    const isFatal = s !== undefined && s.qaScore < 50;
-    const hasReview = !!reviews[ticketId];
-    if (!isFatal && !hasReview) return <span className="text-slate-300 text-sm">—</span>;
+  if (ticketsLoading) {
     return (
-      <div className="flex items-center gap-1 flex-wrap">
-        {isFatal && (
-          <span
-            title="QC score below 50 — fatal issue detected"
-            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-uh-error text-white"
-          >
-            <Skull size={9} /> Fatal
-          </span>
-        )}
-        {hasReview && <ReviewBadge ticketId={ticketId} />}
+      <div className="p-8 flex items-center justify-center min-h-[60vh]">
+        <LoadingSpinner text="Loading agent data..." />
       </div>
     );
-  };
+  }
 
   return (
     <div className="p-8">
-      {/* Header */}
       <div className="flex items-center gap-4 mb-8">
-        <Link
-          to="/"
-          className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 transition-all"
-        >
+        <Link to="/tickets" className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 transition-all">
           <ArrowLeft size={20} />
         </Link>
+        <div
+          className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg shrink-0"
+          style={{ background: getAvatarColor(agentName).bg, color: getAvatarColor(agentName).fg }}
+        >
+          {getAvatarInitial(agentName)}
+        </div>
         <div className="flex-1">
           <h1 className="text-2xl font-bold capitalize">{agentName}</h1>
           <div className="flex items-center gap-2 text-slate-500 mt-1">
@@ -284,17 +460,21 @@ export default function AgentDetailPage() {
             <span className="text-sm">{decodedEmail}</span>
           </div>
         </div>
+        <div className="hidden lg:flex items-center gap-4 px-6 border-x border-slate-100 mx-4 h-12">
+          <div className="text-right">
+            <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1">QA Trend (30d)</p>
+            <div className="w-32 h-8">
+              <AgentTrendSparkline data={trend} showTooltip />
+            </div>
+          </div>
+        </div>
         <div className="flex items-center gap-3">
-          {/* Date Mode Toggle */}
           <div className="flex items-center bg-slate-100 rounded-xl p-1">
             <button
               onClick={() => handleDateModeChange('initialized')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-all ${
-                dateMode === 'initialized'
-                  ? 'bg-uh-purple text-white'
-                  : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+                dateMode === 'initialized' ? 'bg-uh-purple text-white' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
               }`}
-              title="Count tickets by when they were created (matches Yellow.ai)"
             >
               <Calendar size={14} />
               <span>Created</span>
@@ -302,11 +482,8 @@ export default function AgentDetailPage() {
             <button
               onClick={() => handleDateModeChange('activity')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-all ${
-                dateMode === 'activity'
-                  ? 'bg-uh-purple text-white'
-                  : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+                dateMode === 'activity' ? 'bg-uh-purple text-white' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
               }`}
-              title="Count tickets by when they had activity/resolved (includes carry-overs)"
             >
               <CalendarCheck size={14} />
               <span>Activity</span>
@@ -316,248 +493,445 @@ export default function AgentDetailPage() {
         </div>
       </div>
 
-      {ticketsLoading ? (
-        <div className="flex items-center justify-center py-20">
-          <LoadingSpinner text="Loading agent data..." />
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div className="card flex items-center gap-4">
+          <div className="p-3 rounded-xl bg-uh-purple/20">
+            <Ticket size={24} className="text-uh-purple" />
+          </div>
+          <div>
+            <p className="text-slate-500 text-sm">Total Tickets</p>
+            <p className="text-3xl font-bold">{totalTickets}</p>
+          </div>
         </div>
-      ) : (
-        <>
-          {/* Stats Row */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-            <div className="card flex items-center gap-4">
-              <div className="p-3 rounded-xl bg-uh-purple/20">
-                <Ticket size={24} className="text-uh-purple" />
-              </div>
-              <div>
-                <p className="text-slate-500 text-sm">Total Tickets</p>
-                <p className="text-3xl font-bold">{totalTickets}</p>
-              </div>
+        <div className="card flex items-center gap-4">
+          <div className="p-3 rounded-xl bg-uh-success/20">
+            <CheckCircle size={24} className="text-uh-success" />
+          </div>
+          <div>
+            <p className="text-slate-500 text-sm">Resolved</p>
+            <p className="text-3xl font-bold">{resolvedCount}</p>
+            <p className="text-xs text-slate-400">
+              {totalTickets > 0 ? Math.round((resolvedCount / totalTickets) * 100) : 0}%
+            </p>
+          </div>
+        </div>
+        <div className="card flex items-center gap-4">
+          <div className="p-3 rounded-xl bg-uh-cyan/20">
+            <Clock size={24} className="text-uh-cyan" />
+          </div>
+          <div>
+            <p className="text-slate-500 text-sm">Avg Response</p>
+            <p className="text-3xl font-bold">{formatTime(avgResponseTime)}</p>
+          </div>
+        </div>
+        <div className="card flex items-center gap-4">
+          <div className="p-3 rounded-xl bg-uh-error/20">
+            <AlertTriangle size={24} className="text-uh-error" />
+          </div>
+          <div>
+            <p className="text-slate-500 text-sm">Low CSAT</p>
+            <p className="text-3xl font-bold">{lowCsatCount}</p>
+          </div>
+        </div>
+      </div>
+
+      {insightsResult?.stats && (
+        <div className="card mb-6 bg-gradient-to-br from-uh-purple/5 to-uh-cyan/5 border border-uh-purple/10">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-xl bg-uh-purple/20 shrink-0">
+              <Sparkles size={18} className="text-uh-purple" />
             </div>
-            <div className="card flex items-center gap-4">
-              <div className="p-3 rounded-xl bg-uh-success/20">
-                <CheckCircle size={24} className="text-uh-success" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-2">
+                <h3 className="text-sm font-semibold">AI Insights</h3>
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">
+                  Groq · {insightsResult.stats.analyzedCount}/{insightsResult.stats.totalTickets} audited
+                </span>
               </div>
-              <div>
-                <p className="text-slate-500 text-sm">Resolved</p>
-                <p className="text-3xl font-bold">{resolvedCount}</p>
-                <p className="text-xs text-slate-400">
-                  {totalTickets > 0 ? Math.round((resolvedCount / totalTickets) * 100) : 0}%
-                </p>
-              </div>
+              {insightsResult.insight ? (
+                <p className="text-sm text-slate-700 leading-relaxed">{insightsResult.insight}</p>
+              ) : insightsResult.stats.analyzedCount === 0 ? (
+                <p className="text-sm text-slate-500">Audit the 10-ticket sample below to unlock day-level insights and report card generation.</p>
+              ) : (
+                <p className="text-sm text-slate-500">Insight unavailable right now, but the audited sample is ready for manual review.</p>
+              )}
+              {insightsResult.stats.analyzedCount > 0 && (
+                <div className="flex items-center gap-4 mt-3 text-xs flex-wrap">
+                  <span className="flex items-center gap-1">
+                    <span className="font-semibold text-slate-700">Avg QA:</span>
+                    <span className={`font-bold ${
+                      (insightsResult.stats.avgScore ?? 0) >= 80 ? 'text-uh-success' :
+                      (insightsResult.stats.avgScore ?? 0) >= 60 ? 'text-uh-warning' : 'text-uh-error'
+                    }`}>
+                      {insightsResult.stats.avgScore ?? '—'}
+                    </span>
+                  </span>
+                  {insightsResult.stats.lowScoreCount > 0 && (
+                    <span className="flex items-center gap-1 text-uh-error">
+                      <TrendingDown size={12} />
+                      {insightsResult.stats.lowScoreCount} low-score
+                    </span>
+                  )}
+                  {insightsResult.stats.topDeductionCategories?.length > 0 && (
+                    <span className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-slate-500">Top misses:</span>
+                      {insightsResult.stats.topDeductionCategories.slice(0, 3).map((item: any) => (
+                        <span key={item.category} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] capitalize">
+                          {item.category} <span className="font-semibold">×{item.count}</span>
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
-            <div className="card flex items-center gap-4">
-              <div className="p-3 rounded-xl bg-uh-cyan/20">
-                <Clock size={24} className="text-uh-cyan" />
-              </div>
-              <div>
-                <p className="text-slate-500 text-sm">Avg Response</p>
-                <p className="text-3xl font-bold">{formatTime(avgResponseTime)}</p>
-              </div>
+          </div>
+        </div>
+      )}
+
+      <div className="card mb-6 border border-uh-purple/10 bg-gradient-to-br from-white via-white to-uh-purple/5">
+        <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
+          <div>
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <Layers3 size={18} className="text-uh-purple" />
+              Daily Audit Sample
+            </h2>
+            <p className="text-sm text-slate-500 mt-1">
+              AI/algo-picked 10-ticket sample for {formatAgentName(decodedEmail)} on {date}. Review all sampled audits, then generate a report card for the day.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => auditSampleMutation.mutate()}
+              disabled={sampleRows.length === 0 || auditSampleMutation.isPending}
+              className="btn-primary flex items-center gap-2 text-sm !px-4 !py-2.5 disabled:opacity-50"
+            >
+              {auditSampleMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+              Audit Picked 10
+            </button>
+            <button
+              onClick={() => reportCardMutation.mutate()}
+              disabled={!reportReady || reportCardMutation.isPending}
+              className="flex items-center gap-2 text-sm px-4 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50 transition-all"
+            >
+              {reportCardMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+              Create Report Card
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap mb-4">
+          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">
+            {sampleRows.length} sampled
+          </span>
+          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-uh-cyan/10 text-uh-cyan">
+            {sampleAuditedCount}/{sampleRows.length} audited
+          </span>
+          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-uh-purple/10 text-uh-purple">
+            {sampleReviewedCount}/{sampleRows.length} verified
+          </span>
+          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-uh-success/10 text-uh-success">
+            {sampleApprovedCount} approved
+          </span>
+          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-uh-error/10 text-uh-error">
+            {sampleFlaggedCount} flagged
+          </span>
+          {!reportReady && sampleRows.length > 0 && (
+            <span className="text-xs text-slate-400">
+              Report card unlocks after all sampled tickets have both an audit and a manual review.
+            </span>
+          )}
+        </div>
+
+        {reportCardMutation.isError && (
+          <div className="mb-4 p-3 rounded-xl bg-uh-error/10 text-uh-error text-sm">
+            {(reportCardMutation.error as any)?.response?.data?.error || 'Failed to generate report card'}
+          </div>
+        )}
+
+        {sampleRows.length === 0 ? (
+          <p className="text-sm text-slate-400">No daily picks were available for this agent on this date.</p>
+        ) : (
+          <div className="space-y-3">
+            {sampleRows.map((row) => (
+              <Link
+                key={row.pick.ticketId}
+                to={`/ticket/${row.pick.ticketId}`}
+                className="block p-4 rounded-xl bg-slate-50 hover:bg-slate-100 transition-all"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                      <span className="text-uh-cyan font-mono text-xs">#{row.pick.ticketId}</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-200 text-slate-700">
+                        Pick {row.pick.pickOrder}
+                      </span>
+                      {row.pick.pickReason && (
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                          row.pick.pickReason === 'High Risk'
+                            ? 'bg-uh-error/10 text-uh-error border border-uh-error/20'
+                            : 'bg-uh-cyan/10 text-uh-cyan border border-uh-cyan/20'
+                        }`}>
+                          {row.pick.pickReason}
+                        </span>
+                      )}
+                      <ReviewBadge ticketId={String(row.pick.ticketId)} />
+                      {!row.review && row.score && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-uh-warning/10 text-uh-warning">
+                          Review pending
+                        </span>
+                      )}
+                      {!row.score && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-200 text-slate-500">
+                          Audit pending
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm font-medium text-slate-800 truncate">
+                      {row.ticket?.SUBJECT || row.pick.ticket?.subject || 'No subject'}
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1 truncate">
+                      {row.ticket?.VISITOR_EMAIL || row.pick.ticket?.customerEmail || 'No customer email'}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="mb-2">
+                      <ScorePill ticketId={String(row.pick.ticketId)} />
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      {formatTime(row.ticket?.FIRST_RESPONSE_DURATION_SECONDS ?? row.pick.ticket?.responseTimeSeconds ?? null)}
+                    </p>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {reportCard && (
+        <div className="card mb-6 border border-uh-cyan/20 bg-gradient-to-br from-white via-uh-cyan/5 to-white">
+          <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+            <div>
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <FileText size={18} className="text-uh-cyan" />
+                Daily Report Card
+              </h2>
+              <p className="text-sm text-slate-500 mt-1">{reportCard.summary}</p>
             </div>
-            <div className="card flex items-center gap-4">
-              <div className="p-3 rounded-xl bg-uh-error/20">
-                <AlertTriangle size={24} className="text-uh-error" />
-              </div>
-              <div>
-                <p className="text-slate-500 text-sm">Low CSAT</p>
-                <p className="text-3xl font-bold">{lowCsatCount}</p>
-              </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={handleCopyReportCard}
+                className="flex items-center gap-2 text-sm px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-all"
+              >
+                <Copy size={14} />
+                {copySuccess ? 'Copied' : 'Copy'}
+              </button>
+              <button
+                onClick={handleDownloadReportCard}
+                className="flex items-center gap-2 text-sm px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-all"
+              >
+                <Download size={14} />
+                Download
+              </button>
+              <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                reportCard.overallAssessment === 'Excellent'
+                  ? 'bg-uh-success/15 text-uh-success'
+                  : reportCard.overallAssessment === 'Good'
+                  ? 'bg-uh-cyan/15 text-uh-cyan'
+                  : reportCard.overallAssessment === 'Needs Coaching'
+                  ? 'bg-uh-warning/15 text-uh-warning'
+                  : 'bg-uh-error/15 text-uh-error'
+              }`}>
+                {reportCard.overallAssessment}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
+            <div className="p-3 rounded-xl bg-slate-50">
+              <p className="text-xs text-slate-400 mb-1">Sample Avg QA</p>
+              <p className="text-2xl font-bold">{reportCard.sample.avgQaScore}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50">
+              <p className="text-xs text-slate-400 mb-1">Verified Sample</p>
+              <p className="text-2xl font-bold">{reportCard.sample.reviewedCount}/{reportCard.sample.requiredCount}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50">
+              <p className="text-xs text-slate-400 mb-1">Approved</p>
+              <p className="text-2xl font-bold text-uh-success">{reportCard.sample.approvedCount}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50">
+              <p className="text-xs text-slate-400 mb-1">Flagged</p>
+              <p className="text-2xl font-bold text-uh-error">{reportCard.sample.flaggedCount}</p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Issue Breakdown */}
-            <div className="card">
-              <h2 className="text-lg font-semibold mb-4">Issue Breakdown</h2>
-              {sortedIssues.length === 0 ? (
-                <p className="text-slate-400 text-center py-8">No tickets found</p>
-              ) : (
-                <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                  {sortedIssues.map(([subject, count]) => (
-                    <div
-                      key={subject}
-                      className="flex items-center justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-all"
-                    >
-                      <span className="text-sm truncate flex-1 mr-4" title={subject}>
-                        {subject.length > 60 ? subject.substring(0, 60) + '...' : subject}
-                      </span>
-                      <span className="px-3 py-1 rounded-full text-sm font-semibold bg-uh-purple/20 text-uh-purple">
-                        {count}
-                      </span>
+            <div>
+              <h3 className="text-sm font-semibold text-slate-700 mb-2">Strengths</h3>
+              <div className="space-y-2">
+                {reportCard.strengths.map((item) => (
+                  <div key={item} className="p-3 rounded-xl bg-uh-success/5 border border-uh-success/10 text-sm text-slate-700">
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-slate-700 mb-2">Coaching Priorities</h3>
+              <div className="space-y-2">
+                {reportCard.coachingPriorities.map((item) => (
+                  <div key={item} className="p-3 rounded-xl bg-uh-warning/5 border border-uh-warning/10 text-sm text-slate-700">
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-700 mb-2">Top Miss Categories</h3>
+              <div className="space-y-2">
+                {reportCard.topDeductionCategories.length === 0 ? (
+                  <p className="text-sm text-slate-400">No recurring miss categories in the verified sample.</p>
+                ) : reportCard.topDeductionCategories.map((item) => (
+                  <div key={item.category} className="flex items-center justify-between p-3 rounded-xl bg-slate-50">
+                    <span className="text-sm text-slate-700">{item.label}</span>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-uh-purple/10 text-uh-purple">
+                      ×{item.count}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-slate-700 mb-2">Flagged Tickets</h3>
+              <div className="space-y-2">
+                {reportCard.flaggedTickets.length === 0 ? (
+                  <p className="text-sm text-slate-400">No flagged sample tickets in this report card.</p>
+                ) : reportCard.flaggedTickets.map((item) => (
+                  <Link
+                    key={item.ticketId}
+                    to={`/ticket/${item.ticketId}`}
+                    className="block p-3 rounded-xl bg-slate-50 hover:bg-slate-100 transition-all"
+                  >
+                    <div className="flex items-center justify-between gap-3 mb-1">
+                      <span className="text-uh-cyan font-mono text-xs">#{item.ticketId}</span>
+                      <span className="text-xs font-semibold text-uh-error">{item.qaScore ?? '—'}</span>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Recent Tickets */}
-            <div className="card">
-              <h2 className="text-lg font-semibold mb-4">Recent Tickets</h2>
-              {tickets.length === 0 ? (
-                <p className="text-slate-400 text-center py-8">No tickets found for this date</p>
-              ) : (
-                <div className="space-y-3 max-h-[400px] overflow-y-auto">
-                  {tickets.slice(0, 20).map((ticket: any) => (
-                    <Link
-                      key={ticket.TICKET_ID}
-                      to={`/ticket/${ticket.TICKET_ID}`}
-                      className="block p-3 rounded-xl bg-slate-50 hover:bg-slate-100 transition-colors duration-md3 ease-md3"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-uh-cyan font-mono text-xs">
-                              #{ticket.TICKET_ID}
-                            </span>
-                            <span className={`px-2 py-0.5 rounded text-xs ${
-                              ticket.TICKET_STATUS === 'RESOLVED'
-                                ? 'bg-uh-success/20 text-uh-success'
-                                : 'bg-uh-warning/20 text-uh-warning'
-                            }`}>
-                              {ticket.TICKET_STATUS}
-                            </span>
-                            <ReviewBadge ticketId={String(ticket.TICKET_ID)} />
-                          </div>
-                          <p className="text-sm mt-1 truncate">{ticket.SUBJECT}</p>
-                          <p className="text-xs text-slate-400 mt-1 truncate">
-                            {ticket.VISITOR_EMAIL}
-                          </p>
-                        </div>
-                        <div className="text-right text-xs text-slate-400">
-                          <p>{formatTime(ticket.FIRST_RESPONSE_DURATION_SECONDS || 0)}</p>
-                          {ticket.TICKET_CSAT && ticket.TICKET_CSAT !== 'NA' && (
-                            <p className={ticket.TICKET_CSAT < 3 ? 'text-uh-error' : 'text-uh-success'}>
-                              CSAT: {ticket.TICKET_CSAT}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Full Tickets Table */}
-          <div className="card mt-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-lg font-semibold">All Tickets ({totalTickets})</h2>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  {Object.keys(cachedScores).length > 0
-                    ? `${Object.keys(cachedScores).length} of ${totalTickets} scored`
-                    : 'No QC scores yet — click Run QC to analyze'}
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                {qcRunning && qcProgress && (
-                  <span className="text-xs text-slate-400 tabular-nums">
-                    {qcProgress.done} / {qcProgress.total}
-                  </span>
-                )}
-                <button
-                  onClick={() => runBulkQC(false)}
-                  disabled={qcRunning || tickets.length === 0}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-uh-purple text-white hover:bg-uh-purple/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                >
-                  {qcRunning ? (
-                    <>
-                      <Loader2 size={14} className="animate-spin" />
-                      Analyzing…
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles size={14} />
-                      Run QC
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={() => runBulkQC(true)}
-                  disabled={qcRunning || tickets.length === 0}
-                  title="Re-score all tickets using the latest SOPs (ignores cached scores)"
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-uh-purple text-uh-purple hover:bg-uh-purple/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                >
-                  <Sparkles size={14} />
-                  Re-score
-                </button>
+                    <p className="text-sm text-slate-700 truncate">{item.subject}</p>
+                    {(item.reviewNote || item.deductionSummary) && (
+                      <p className="text-xs text-slate-400 mt-1 truncate">{item.reviewNote || item.deductionSummary}</p>
+                    )}
+                  </Link>
+                ))}
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="text-left text-slate-500 text-sm">
-                    <th className="pb-3 pr-4">Ticket ID</th>
-                    <th className="pb-3 px-4">Subject</th>
-                    <th className="pb-3 px-4">Customer</th>
-                    <th className="pb-3 px-4">Status</th>
-                    <th className="pb-3 px-4">Response</th>
-                    <th className="pb-3 px-4">QC Score</th>
-                    <th className="pb-3 pl-4">QC Review</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tickets.map((ticket: any) => (
-                    <tr
-                      key={ticket.TICKET_ID}
-                      className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${
-                        (cachedScores[String(ticket.TICKET_ID)]?.qaScore ?? 100) < 50
-                          ? 'bg-uh-error/5'
-                          : ''
-                      }`}
-                    >
-                      <td className="py-3 pr-4">
-                        <Link
-                          to={`/ticket/${ticket.TICKET_ID}`}
-                          className="text-uh-cyan hover:underline font-mono text-sm"
-                        >
-                          #{ticket.TICKET_ID}
-                        </Link>
-                      </td>
-                      <td className="py-3 px-4 max-w-[300px]">
-                        <span className="text-sm truncate block" title={ticket.SUBJECT}>
-                          {ticket.SUBJECT?.length > 50
-                            ? ticket.SUBJECT.substring(0, 50) + '...'
-                            : ticket.SUBJECT}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4">
-                        <Link
-                          to={`/customer/${encodeURIComponent(ticket.VISITOR_EMAIL)}`}
-                          className="text-xs text-slate-500 hover:text-uh-cyan"
-                        >
-                          {ticket.VISITOR_EMAIL?.length > 30
-                            ? ticket.VISITOR_EMAIL.substring(0, 30) + '...'
-                            : ticket.VISITOR_EMAIL}
-                        </Link>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className={`px-2 py-1 rounded text-xs ${
-                          ticket.TICKET_STATUS === 'RESOLVED'
-                            ? 'bg-uh-success/20 text-uh-success'
-                            : 'bg-uh-warning/20 text-uh-warning'
-                        }`}>
-                          {ticket.TICKET_STATUS}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-sm text-slate-500">
-                        {formatTime(ticket.FIRST_RESPONSE_DURATION_SECONDS || 0)}
-                      </td>
-                      <td className="py-3 px-4">
-                        <QCScorePill ticketId={String(ticket.TICKET_ID)} />
-                      </td>
-                      <td className="py-3 pl-4">
-                        <QCReviewCell ticketId={String(ticket.TICKET_ID)} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           </div>
-        </>
+        </div>
       )}
+
+      <div className="card mb-6">
+        <h2 className="text-lg font-semibold mb-4">Issue Breakdown</h2>
+        {sortedIssues.length === 0 ? (
+          <p className="text-slate-400 text-center py-8">No tickets found</p>
+        ) : (
+          <div className="space-y-2 max-h-[420px] overflow-y-auto">
+            {sortedIssues.map(([subject, count]) => (
+              <div key={subject} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-all">
+                <span className="text-sm truncate flex-1 mr-4" title={subject}>
+                  {subject.length > 60 ? `${subject.substring(0, 60)}...` : subject}
+                </span>
+                <span className="px-3 py-1 rounded-full text-sm font-semibold bg-uh-purple/20 text-uh-purple">
+                  {count}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <details className="card group">
+        <summary className="list-none cursor-pointer flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold">Other Resolved Tickets</h2>
+            <p className="text-sm text-slate-500 mt-1">
+              Remaining resolved tickets for this day, excluding the AI-picked 10-ticket audit sample.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-slate-500">
+            <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">
+              {otherResolvedTickets.length}
+            </span>
+            <ChevronDown size={18} className="transition-transform group-open:rotate-180" />
+          </div>
+        </summary>
+
+        <div className="mt-4 overflow-x-auto">
+          {otherResolvedTickets.length === 0 ? (
+            <p className="text-sm text-slate-400 py-2">No additional resolved tickets outside the sampled audit set.</p>
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr className="text-left text-slate-500 text-sm">
+                  <th className="pb-3 pr-4">Ticket ID</th>
+                  <th className="pb-3 px-4">Subject</th>
+                  <th className="pb-3 px-4">Customer</th>
+                  <th className="pb-3 px-4">Response</th>
+                  <th className="pb-3 px-4">QC Score</th>
+                  <th className="pb-3 pl-4">QC Review</th>
+                </tr>
+              </thead>
+              <tbody>
+                {otherResolvedTickets.map((ticket) => (
+                  <tr
+                    key={ticket.TICKET_ID}
+                    className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${
+                      (cachedScores[String(ticket.TICKET_ID)]?.qaScore ?? 100) < 50 ? 'bg-uh-error/5' : ''
+                    }`}
+                  >
+                    <td className="py-3 pr-4">
+                      <Link to={`/ticket/${ticket.TICKET_ID}`} className="text-uh-cyan hover:underline font-mono text-sm">
+                        #{ticket.TICKET_ID}
+                      </Link>
+                    </td>
+                    <td className="py-3 px-4 max-w-[360px]">
+                      <span className="text-sm truncate block" title={ticket.SUBJECT}>
+                        {ticket.SUBJECT?.length > 65 ? `${ticket.SUBJECT.substring(0, 65)}...` : ticket.SUBJECT}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <Link to={`/customer/${encodeURIComponent(ticket.VISITOR_EMAIL)}`} className="text-xs text-slate-500 hover:text-uh-cyan">
+                        {ticket.VISITOR_EMAIL?.length > 30 ? `${ticket.VISITOR_EMAIL.substring(0, 30)}...` : ticket.VISITOR_EMAIL}
+                      </Link>
+                    </td>
+                    <td className="py-3 px-4 text-sm text-slate-500">
+                      {formatTime(ticket.FIRST_RESPONSE_DURATION_SECONDS)}
+                    </td>
+                    <td className="py-3 px-4">
+                      <ScorePill ticketId={String(ticket.TICKET_ID)} />
+                    </td>
+                    <td className="py-3 pl-4">
+                      {cachedScores[String(ticket.TICKET_ID)]?.qaScore !== undefined && cachedScores[String(ticket.TICKET_ID)]?.qaScore < 50 ? (
+                        <div className="flex items-center gap-1 flex-wrap">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-uh-error text-white">
+                            <Skull size={9} /> Fatal
+                          </span>
+                          <ReviewBadge ticketId={String(ticket.TICKET_ID)} />
+                        </div>
+                      ) : (
+                        <ReviewBadge ticketId={String(ticket.TICKET_ID)} />
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </details>
     </div>
   );
 }
