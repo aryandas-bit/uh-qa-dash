@@ -11,7 +11,7 @@ import {
   getQAScoresBulk,
   DateMode
 } from '../services/database.service.js';
-import { getDailyPicks } from '../services/dailypicks.service.js';
+import { createAgentRandomSample, getDailyPicks, runDailyAudit } from '../services/dailypicks.service.js';
 import NodeCache from 'node-cache';
 
 const router = Router();
@@ -143,6 +143,35 @@ router.get('/:email/qa-trend', async (req, res) => {
   } catch (error) {
     console.error('Error fetching agent QA trend:', error);
     res.status(500).json({ error: 'Failed to fetch agent QA trend' });
+  }
+});
+
+// POST /api/agents/:email/audit-now - Create a random 10-ticket sample for an agent/day
+router.post('/:email/audit-now', async (req, res) => {
+  try {
+    const { email } = req.params;
+    const { date, dateMode = 'activity', count = 10 } = req.body;
+    const decodedEmail = decodeURIComponent(email);
+
+    if (!date) {
+      return res.status(400).json({ error: 'date is required' });
+    }
+
+    const picks = await createAgentRandomSample(date, decodedEmail, dateMode, Math.max(1, Number(count) || 10));
+    const status = await runDailyAudit(date, dateMode);
+
+    res.json({
+      agentEmail: decodedEmail,
+      date,
+      dateMode,
+      count: picks.length,
+      ticketIds: picks.map((pick) => pick.ticketId),
+      picks,
+      auditStatus: status,
+    });
+  } catch (error) {
+    console.error('Error creating audit-now sample:', error);
+    res.status(500).json({ error: 'Failed to create random audit sample' });
   }
 });
 

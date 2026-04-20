@@ -219,6 +219,14 @@ export async function clearDailyPicks(date: string, dateMode: DateMode = 'activi
   });
 }
 
+export async function clearDailyPicksForAgent(date: string, dateMode: DateMode = 'activity', agentEmail: string): Promise<void> {
+  await initPromise;
+  await reviewsDb.execute({
+    sql: `DELETE FROM daily_picks WHERE pick_date = ? AND date_mode = ? AND agent_email = ?`,
+    args: [date, dateMode, agentEmail],
+  });
+}
+
 export async function markPickAnalyzed(date: string, dateMode: DateMode, ticketId: string, status: string): Promise<void> {
   await initPromise;
   await reviewsDb.execute({

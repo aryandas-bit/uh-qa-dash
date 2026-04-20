@@ -2,6 +2,7 @@ import {
   getDailyPickCandidates,
   getDailyPicksFromDb,
   saveDailyPicks,
+  clearDailyPicksForAgent,
   markPickAnalyzed,
   syncDailyPickAnalysisFlags,
   getTicketById,
@@ -111,6 +112,15 @@ function calculateRiskScore(analysis: QuickAnalysis): number {
 
 const MAX_CANDIDATES_TO_SCORE_PER_AGENT = 40;
 const GROQ_CONCURRENCY = 5;
+
+function pickRandomSubset<T>(items: T[], count: number): T[] {
+  const pool = [...items];
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const swapIndex = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[swapIndex]] = [pool[swapIndex], pool[i]];
+  }
+  return pool.slice(0, Math.min(count, pool.length));
+}
 
 export async function getDailyPicks(
   date: string,
@@ -262,6 +272,45 @@ export async function getDailyPicks(
 
   const picks = await getDailyPicksFromDb(date, dateMode);
   return { picks, generated: true };
+}
+
+export async function createAgentRandomSample(
+  date: string,
+  agentEmail: string,
+  dateMode: DateMode = 'activity',
+  picksCount = DEFAULT_PICKS_PER_AGENT
+): Promise<DailyPick[]> {
+  await syncExistingAnalyses(date, dateMode);
+
+  const normalizedAgentEmail = decodeURIComponent(agentEmail);
+  await clearDailyPicksForAgent(date, dateMode, normalizedAgentEmail);
+
+  const allCandidates = await getDailyPickCandidates(date, dateMode);
+  const agentCandidates = allCandidates.filter((candidate) => candidate.agentEmail === normalizedAgentEmail);
+  if (agentCandidates.length === 0) {
+    return [];
+  }
+
+  const resolvedCandidates = agentCandidates.filter((candidate) => candidate.ticketStatus?.toLowerCase() === 'resolved');
+  const candidatePool = resolvedCandidates.length >= picksCount ? resolvedCandidates : agentCandidates;
+  const selected = pickRandomSubset(candidatePool, picksCount);
+  const storedAnalysisByTicket = await getStoredTicketAnalysisIds(selected.map((candidate) => candidate.ticketId));
+
+  await saveDailyPicks(selected.map((candidate, index) => ({
+    pickDate: date,
+    dateMode,
+    agentEmail: normalizedAgentEmail,
+    ticketId: candidate.ticketId,
+    pickOrder: index + 1,
+    pick_reason: 'Random Audit',
+    risk_score: null,
+    analyzed: storedAnalysisByTicket.has(candidate.ticketId),
+    analysisStatus: storedAnalysisByTicket.has(candidate.ticketId) ? 'success' : null,
+  })));
+
+  return (await getDailyPicksFromDb(date, dateMode))
+    .filter((pick) => pick.agentEmail === normalizedAgentEmail)
+    .sort((left, right) => left.pickOrder - right.pickOrder);
 }
 
 export interface AuditProgress {

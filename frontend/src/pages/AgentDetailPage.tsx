@@ -179,8 +179,16 @@ export default function AgentDetailPage() {
     queryKey: ['daily-picks', date, dateMode],
     queryFn: () => dailyPicksApi.getPicks(date, dateMode).then((response) => response.data),
     enabled: !!date,
+    staleTime: 1000 * 10,
+    refetchInterval: (query) => ((query.state.data as any)?.inProgress ? 3000 : false),
+  });
+
+  const { data: auditStatusData } = useQuery({
+    queryKey: ['daily-picks-status', date, dateMode],
+    queryFn: () => dailyPicksApi.getStatus(date, dateMode).then((response) => response.data),
+    enabled: !!date,
     staleTime: 0,
-    refetchOnMount: 'always',
+    refetchInterval: (query) => ((query.state.data as any)?.inProgress ? 2000 : false),
   });
 
   const tickets: AgentTicketRow[] = ticketsData?.data?.tickets || [];
@@ -190,8 +198,7 @@ export default function AgentDetailPage() {
     queryKey: ['reviews', ticketIds.join(',')],
     queryFn: () => analysisApi.getReviews(ticketIds),
     enabled: ticketIds.length > 0,
-    staleTime: 0,
-    refetchOnMount: 'always',
+    staleTime: 1000 * 10,
   });
   const reviews: Record<string, QAReview> = reviewsData?.data?.reviews || {};
 
@@ -199,8 +206,8 @@ export default function AgentDetailPage() {
     queryKey: ['cached-scores', ticketIds.join(',')],
     queryFn: () => analysisApi.getCachedScores(ticketIds),
     enabled: ticketIds.length > 0,
-    staleTime: 0,
-    refetchOnMount: 'always',
+    staleTime: 1000 * 10,
+    refetchInterval: auditStatusData?.inProgress ? 3000 : false,
   });
   const cachedScores: Record<string, ScoreEntry> = scoresData?.data?.scores || {};
 
@@ -209,6 +216,7 @@ export default function AgentDetailPage() {
     queryFn: () => analysisApi.getAgentInsights(decodedEmail, date, dateMode),
     enabled: !!decodedEmail && !!date,
     staleTime: 1000 * 60,
+    refetchInterval: auditStatusData?.inProgress ? 4000 : false,
   });
   const insightsResult = insightsData?.data;
 
@@ -290,6 +298,27 @@ export default function AgentDetailPage() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] }),
         queryClient.invalidateQueries({ queryKey: ['cached-scores', ticketIds.join(',')] }),
+        queryClient.invalidateQueries({ queryKey: ['agent-insights', decodedEmail, date, dateMode] }),
+      ]);
+    },
+  });
+
+  const auditNowMutation = useMutation({
+    mutationFn: async () => {
+      const response = await agentsApi.auditNow(decodedEmail, date, dateMode, 10);
+      const pickedIds = (response.data?.ticketIds || []) as string[];
+      if (pickedIds.length === 0) {
+        throw new Error('No tickets were available to audit');
+      }
+      return pickedIds;
+    },
+    onSuccess: async () => {
+      setReportCard(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] }),
+        queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode] }),
+        queryClient.invalidateQueries({ queryKey: ['cached-scores', ticketIds.join(',')] }),
+        queryClient.invalidateQueries({ queryKey: ['reviews', ticketIds.join(',')] }),
         queryClient.invalidateQueries({ queryKey: ['agent-insights', decodedEmail, date, dateMode] }),
       ]);
     },
@@ -597,14 +626,28 @@ export default function AgentDetailPage() {
               Daily Audit Sample
             </h2>
             <p className="text-sm text-slate-500 mt-1">
-              AI/algo-picked 10-ticket sample for {formatAgentName(decodedEmail)} on {date}. Review all sampled audits, then generate a report card for the day.
+              Use `Audit 10 Now` to instantly create a random 10-ticket sample for this agent, audit it, and refresh the Groq summary on this page.
             </p>
+            {auditStatusData?.inProgress && (
+              <p className="text-xs text-uh-purple mt-2 flex items-center gap-1.5">
+                <Loader2 size={12} className="animate-spin" />
+                Audit is running in the background. Scores and Groq summary will update automatically.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <button
+              onClick={() => auditNowMutation.mutate()}
+              disabled={auditNowMutation.isPending}
+              className="btn-primary flex items-center gap-2 text-sm !px-4 !py-2.5 disabled:opacity-50"
+            >
+              {auditNowMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+              Audit 10 Now
+            </button>
+            <button
               onClick={() => auditSampleMutation.mutate()}
               disabled={sampleRows.length === 0 || auditSampleMutation.isPending}
-              className="btn-primary flex items-center gap-2 text-sm !px-4 !py-2.5 disabled:opacity-50"
+              className="flex items-center gap-2 text-sm px-4 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50 transition-all"
             >
               {auditSampleMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
               Audit Picked 10
@@ -649,8 +692,14 @@ export default function AgentDetailPage() {
           </div>
         )}
 
+        {auditNowMutation.isError && (
+          <div className="mb-4 p-3 rounded-xl bg-uh-error/10 text-uh-error text-sm">
+            {(auditNowMutation.error as any)?.response?.data?.error || (auditNowMutation.error as Error)?.message || 'Failed to audit random sample'}
+          </div>
+        )}
+
         {sampleRows.length === 0 ? (
-          <p className="text-sm text-slate-400">No daily picks were available for this agent on this date.</p>
+          <p className="text-sm text-slate-400">No sample exists yet for this agent on this date. Click `Audit 10 Now` to generate one instantly.</p>
         ) : (
           <div className="space-y-3">
             {sampleRows.map((row) => (
