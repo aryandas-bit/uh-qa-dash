@@ -218,6 +218,9 @@ DO NOT mark as abandoned if:
 ## IMPORTANT - Customer History Context:
 {customerHistory}
 
+## Triage Context (supporting context, NOT source of truth):
+{triageContext}
+
 ## Persistent Audit Memory:
 {auditMemory}
 
@@ -288,7 +291,8 @@ export async function analyzeTicket(
   category?: string,
   tags?: string,
   customerHistory?: CustomerTicketHistory[],
-  auditMemories?: AuditMemoryRecord[]
+  auditMemories?: AuditMemoryRecord[],
+  triage?: any
 ): Promise<QAAnalysis> {
   let sopContent = 'No specific SOP matched for this ticket category.';
   let matchedSOP: string | null = null;
@@ -296,6 +300,7 @@ export async function analyzeTicket(
   const normalizedMessages = parseMessages(messagesJson);
   const conversationDigest = buildConversationDigest(normalizedMessages);
   const formattedHistory = formatCustomerHistory(customerHistory || []);
+  const formattedTriageContext = formatTriageContext(triage);
   const formattedAuditMemory = formatAuditMemories(auditMemories || []);
   const formattedTags = formatTagsForPrompt(tags);
   const formattedCategory = category?.trim() || 'Unknown';
@@ -315,6 +320,7 @@ export async function analyzeTicket(
 
   const prompt = ANALYSIS_PROMPT
     .replace('{customerHistory}', formattedHistory)
+    .replace('{triageContext}', formattedTriageContext)
     .replace('{auditMemory}', formattedAuditMemory)
     .replace('{sopContent}', sopContent)
     .replace('{category}', formattedCategory)
@@ -900,4 +906,31 @@ export async function batchAnalyze(
   }
 
   return results;
+}
+
+function formatTriageContext(triage?: any): string {
+  if (!triage) {
+    return 'No triage context available.';
+  }
+
+  const keyFacts = (triage.keyFacts || []).slice(0, 5).map((f: string) => `- ${f}`).join('\n');
+  const riskFlags = (triage.riskFlags || []).slice(0, 5).map((f: string) => `- ${f}`).join('\n');
+
+  return `Issue category: ${triage.issueCategory || 'unknown'}
+Priority: ${triage.priority || 'standard'}
+Customer sentiment: ${triage.customerSentiment || 'unknown'}
+Has technical issue: ${triage.hasTechnicalIssue ? 'yes' : 'no'}
+Repeat issue likely: ${triage.repeatIssueLikely ? 'yes' : 'no'}
+Resolution state: ${triage.resolutionState || 'unclear'}
+Key facts:
+${keyFacts || '(none)'}
+Risk flags:
+${riskFlags || '(none)'}
+Digest: ${triage.shortDigest || '(none)'}
+
+RULES FOR TRIAGE CONTEXT:
+- This is a fast preliminary scan. Treat it as a hint, not evidence.
+- If the transcript contradicts triage, trust the transcript.
+- You alone decide the final QA score and deductions.
+- Do NOT cite the triage as justification in deductions.`;
 }

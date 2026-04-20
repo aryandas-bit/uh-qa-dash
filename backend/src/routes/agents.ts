@@ -6,12 +6,13 @@ import {
   getDefaulters,
   getAvailableDates,
   getAgentQATrend,
+  getAgentsQATrends,
   getDailyPickTicketSummaries,
   getQAReviewsBulk,
   getQAScoresBulk,
   DateMode
 } from '../services/database.service.js';
-import { getDailyPicks } from '../services/dailypicks.service.js';
+import { createAgentRandomSample, getDailyPicks, runDailyAudit } from '../services/dailypicks.service.js';
 import NodeCache from 'node-cache';
 
 const router = Router();
@@ -40,6 +41,27 @@ function buildOverallAssessment(avgScore: number, flaggedCount: number): string 
   return 'Critical Attention';
 }
 
+async function handleAuditNowRequest(
+  agentEmail: string,
+  date: string,
+  dateMode: DateMode,
+  count: number
+) {
+  const decodedEmail = decodeURIComponent(agentEmail);
+  const picks = await createAgentRandomSample(date, decodedEmail, dateMode, Math.max(1, Number(count) || 10));
+  const status = await runDailyAudit(date, dateMode, decodedEmail);
+
+  return {
+    agentEmail: decodedEmail,
+    date,
+    dateMode,
+    count: picks.length,
+    ticketIds: picks.map((pick) => pick.ticketId),
+    picks,
+    auditStatus: status,
+  };
+}
+
 // GET /api/agents/dates - Get available dates
 router.get('/dates', async (req, res) => {
   try {
@@ -55,6 +77,28 @@ router.get('/dates', async (req, res) => {
   } catch (error) {
     console.error('Error fetching dates:', error);
     res.status(500).json({ error: 'Failed to fetch available dates' });
+  }
+});
+
+// GET /api/agents/qa-trends?emails=a,b,c&limit=7 - Bulk get agent QA trends
+router.get('/qa-trends', async (req, res) => {
+  try {
+    const rawEmails = String(req.query.emails || '');
+    const limit = parseInt(req.query.limit as string, 10) || 14;
+    const emails = rawEmails
+      .split(',')
+      .map((value) => decodeURIComponent(value.trim()))
+      .filter(Boolean);
+
+    if (emails.length === 0) {
+      return res.status(400).json({ error: 'emails parameter is required' });
+    }
+
+    const trends = await getAgentsQATrends(emails, limit);
+    res.json({ limit, trends });
+  } catch (error) {
+    console.error('Error fetching bulk agent QA trends:', error);
+    res.status(500).json({ error: 'Failed to fetch bulk agent QA trends' });
   }
 });
 
@@ -81,6 +125,26 @@ router.get('/daily', async (req, res) => {
   } catch (error) {
     console.error('Error fetching agent summary:', error);
     res.status(500).json({ error: 'Failed to fetch agent summary' });
+  }
+});
+
+// POST /api/agents/audit-now - Safer body-based route for creating a random 10-ticket sample
+router.post('/audit-now', async (req, res) => {
+  try {
+    const { email, date, dateMode = 'activity', count = 10 } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'email is required' });
+    }
+    if (!date) {
+      return res.status(400).json({ error: 'date is required' });
+    }
+
+    const payload = await handleAuditNowRequest(String(email), String(date), dateMode as DateMode, Number(count));
+    res.json(payload);
+  } catch (error) {
+    console.error('Error creating audit-now sample:', error);
+    res.status(500).json({ error: 'Failed to create random audit sample' });
   }
 });
 
@@ -146,6 +210,24 @@ router.get('/:email/qa-trend', async (req, res) => {
   }
 });
 
+// POST /api/agents/:email/audit-now - Create a random 10-ticket sample for an agent/day
+router.post('/:email/audit-now', async (req, res) => {
+  try {
+    const { email } = req.params;
+    const { date, dateMode = 'activity', count = 10 } = req.body;
+
+    if (!date) {
+      return res.status(400).json({ error: 'date is required' });
+    }
+
+    const payload = await handleAuditNowRequest(email, String(date), dateMode as DateMode, Number(count));
+    res.json(payload);
+  } catch (error) {
+    console.error('Error creating audit-now sample:', error);
+    res.status(500).json({ error: 'Failed to create random audit sample' });
+  }
+});
+
 // GET /api/agents/:email/report-card - Generate a reviewed sample-based report card for a date
 router.get('/:email/report-card', async (req, res) => {
   try {
@@ -166,12 +248,10 @@ router.get('/:email/report-card', async (req, res) => {
 
     const [ticketResult, pickResult] = await Promise.all([
       getAgentTickets(decodedEmail, date, 500, 0, dateMode),
-      getDailyPicks(date, 10, dateMode),
+      getDailyPicks(date, 10, dateMode, { agentEmail: decodedEmail, autoGenerate: false }),
     ]);
 
-    const samplePicks = pickResult.picks
-      .filter((pick) => pick.agentEmail === decodedEmail)
-      .sort((left, right) => left.pickOrder - right.pickOrder);
+    const samplePicks = pickResult.picks.sort((left, right) => left.pickOrder - right.pickOrder);
 
     if (samplePicks.length === 0) {
       return res.status(404).json({ error: 'No sampled tickets found for this agent and date' });

@@ -2,6 +2,7 @@ import {
   getDailyPickCandidates,
   getDailyPicksFromDb,
   saveDailyPicks,
+  clearDailyPicksForAgent,
   markPickAnalyzed,
   syncDailyPickAnalysisFlags,
   getTicketById,
@@ -22,8 +23,8 @@ import {
   type DailyPickCandidate,
 } from './database.service.js';
 import { analyzeTicket, type CustomerTicketHistory } from './gemini.service.js';
-import { analyzeHybrid } from './analysis-hybrid.service.js';
-import { analyzeQuick, type QuickAnalysis } from './groq.service.js';
+import { triageTicket, type TriageDigest } from './groq.service.js';
+import { saveQAScore } from './database.service.js';
 
 const DEFAULT_PICKS_PER_AGENT = 10;
 
@@ -97,34 +98,52 @@ function seededShuffle<T>(arr: T[], rng: () => number): T[] {
   return shuffled;
 }
 
-function calculateRiskScore(analysis: QuickAnalysis): number {
+function calculateRiskScore(analysis: TriageDigest): number {
   let score = 0;
-  // Risk = (sentiment=angry: 3pts) + (priority=urgent: 2pts) + (hasError: 1pt)
-  if (analysis.sentiment === 'angry') score += 3;
-  else if (analysis.sentiment === 'negative') score += 1; // Slight boost for negative too
-
+  if (analysis.customerSentiment === 'angry') score += 3;
+  else if (analysis.customerSentiment === 'negative') score += 1;
   if (analysis.priority === 'urgent') score += 2;
-  if (analysis.hasError) score += 1;
-
+  if (analysis.hasTechnicalIssue) score += 1;
+  if (analysis.repeatIssueLikely) score += 2;
+  score += Math.min((analysis.riskFlags?.length || 0), 3);
   return score;
 }
 
 const MAX_CANDIDATES_TO_SCORE_PER_AGENT = 40;
 const GROQ_CONCURRENCY = 5;
 
+function pickRandomSubset<T>(items: T[], count: number): T[] {
+  const pool = [...items];
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const swapIndex = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[swapIndex]] = [pool[swapIndex], pool[i]];
+  }
+  return pool.slice(0, Math.min(count, pool.length));
+}
+
 export async function getDailyPicks(
   date: string,
   picksPerAgent = DEFAULT_PICKS_PER_AGENT,
-  dateMode: DateMode = 'activity'
+  dateMode: DateMode = 'activity',
+  options?: {
+    agentEmail?: string;
+    autoGenerate?: boolean;
+  }
 ): Promise<{ picks: DailyPick[]; generated: boolean }> {
+  const normalizedAgentEmail = options?.agentEmail ? decodeURIComponent(options.agentEmail) : undefined;
+  const autoGenerate = options?.autoGenerate !== false;
+
   // Check cache first
   await syncExistingAnalyses(date, dateMode);
-  const existing = await getDailyPicksFromDb(date, dateMode);
+  const existing = await getDailyPicksFromDb(date, dateMode, normalizedAgentEmail);
   if (existing.length > 0) {
     return { picks: existing, generated: false };
   }
+  if (!autoGenerate) {
+    return { picks: [], generated: false };
+  }
 
-  const rawCandidates = await getDailyPickCandidates(date, dateMode);
+  const rawCandidates = await getDailyPickCandidates(date, dateMode, normalizedAgentEmail);
   if (rawCandidates.length === 0) {
     return { picks: [], generated: true };
   }
@@ -170,14 +189,14 @@ export async function getDailyPicks(
         const messagesRaw = messages[ticketId] || '[]';
         const { firstCustomer, lastAgent, totalTurns } = parseMessagesForHybrid(messagesRaw);
         try {
-          const quick = await analyzeQuick(ticketId, firstCustomer, lastAgent, totalTurns);
-          const riskScore = calculateRiskScore(quick);
+          const digest = await triageTicket(ticketId, firstCustomer, lastAgent, totalTurns);
+          const riskScore = calculateRiskScore(digest);
           newScores.push({
             ticketId,
-            sentiment: quick.sentiment,
-            priority: quick.priority,
-            hasError: quick.hasError,
-            issueCategory: quick.issueCategory,
+            sentiment: digest.customerSentiment,
+            priority: digest.priority,
+            hasError: digest.hasTechnicalIssue,
+            issueCategory: digest.issueCategory,
             riskScore
           });
         } catch (err) {
@@ -260,8 +279,45 @@ export async function getDailyPicks(
     await saveDailyPicks(allPicks);
   }
 
-  const picks = await getDailyPicksFromDb(date, dateMode);
+  const picks = await getDailyPicksFromDb(date, dateMode, normalizedAgentEmail);
   return { picks, generated: true };
+}
+
+export async function createAgentRandomSample(
+  date: string,
+  agentEmail: string,
+  dateMode: DateMode = 'activity',
+  picksCount = DEFAULT_PICKS_PER_AGENT
+): Promise<DailyPick[]> {
+  await syncExistingAnalyses(date, dateMode);
+
+  const normalizedAgentEmail = decodeURIComponent(agentEmail);
+  await clearDailyPicksForAgent(date, dateMode, normalizedAgentEmail);
+
+  const agentCandidates = await getDailyPickCandidates(date, dateMode, normalizedAgentEmail);
+  if (agentCandidates.length === 0) {
+    return [];
+  }
+
+  const resolvedCandidates = agentCandidates.filter((candidate) => candidate.ticketStatus?.toLowerCase() === 'resolved');
+  const candidatePool = resolvedCandidates.length >= picksCount ? resolvedCandidates : agentCandidates;
+  const selected = pickRandomSubset(candidatePool, picksCount);
+  const storedAnalysisByTicket = await getStoredTicketAnalysisIds(selected.map((candidate) => candidate.ticketId));
+
+  await saveDailyPicks(selected.map((candidate, index) => ({
+    pickDate: date,
+    dateMode,
+    agentEmail: normalizedAgentEmail,
+    ticketId: candidate.ticketId,
+    pickOrder: index + 1,
+    pick_reason: 'Random Audit',
+    risk_score: undefined,
+    analyzed: storedAnalysisByTicket.has(candidate.ticketId),
+    analysisStatus: storedAnalysisByTicket.has(candidate.ticketId) ? 'success' : null,
+  })));
+
+  return (await getDailyPicksFromDb(date, dateMode, normalizedAgentEmail))
+    .sort((left, right) => left.pickOrder - right.pickOrder);
 }
 
 export interface AuditProgress {
@@ -276,11 +332,21 @@ export interface AuditProgress {
 // Track active audits to prevent duplicate runs
 const activeAudits = new Set<string>();
 
-export async function getAuditStatus(date: string, dateMode: DateMode = 'activity'): Promise<AuditProgress> {
+export async function getAuditStatus(
+  date: string,
+  dateMode: DateMode = 'activity',
+  agentEmail?: string
+): Promise<AuditProgress> {
   await syncExistingAnalyses(date, dateMode);
-  const picks = await getDailyPicksFromDb(date, dateMode);
+  const normalizedAgentEmail = agentEmail ? decodeURIComponent(agentEmail) : undefined;
+  const picks = await getDailyPicksFromDb(date, dateMode, normalizedAgentEmail);
   const analyzed = picks.filter(p => p.analyzed).length;
   const errors = picks.filter(p => p.analysisStatus === 'error').length;
+  const scopedAuditKey = getAuditKey(date, dateMode, normalizedAgentEmail);
+  const globalAuditKey = getAuditKey(date, dateMode);
+  const inProgress = normalizedAgentEmail
+    ? activeAudits.has(scopedAuditKey) || activeAudits.has(globalAuditKey)
+    : Array.from(activeAudits).some((key) => key === globalAuditKey || key.startsWith(`${globalAuditKey}:`));
 
   return {
     date,
@@ -288,22 +354,30 @@ export async function getAuditStatus(date: string, dateMode: DateMode = 'activit
     analyzed,
     pending: picks.length - analyzed,
     errors,
-    inProgress: activeAudits.has(getAuditKey(date, dateMode)),
+    inProgress,
   };
 }
 
-export async function runDailyAudit(date: string, dateMode: DateMode = 'activity'): Promise<AuditProgress> {
-  const auditKey = getAuditKey(date, dateMode);
+export async function runDailyAudit(
+  date: string,
+  dateMode: DateMode = 'activity',
+  agentEmail?: string
+): Promise<AuditProgress> {
+  const normalizedAgentEmail = agentEmail ? decodeURIComponent(agentEmail) : undefined;
+  const auditKey = getAuditKey(date, dateMode, normalizedAgentEmail);
   if (activeAudits.has(auditKey)) {
-    return getAuditStatus(date, dateMode);
+    return getAuditStatus(date, dateMode, normalizedAgentEmail);
   }
 
   // Ensure picks exist
-  const { picks } = await getDailyPicks(date, DEFAULT_PICKS_PER_AGENT, dateMode);
+  const { picks } = await getDailyPicks(date, DEFAULT_PICKS_PER_AGENT, dateMode, {
+    agentEmail: normalizedAgentEmail,
+    autoGenerate: !normalizedAgentEmail,
+  });
   const unanalyzed = picks.filter(p => !p.analyzed);
 
   if (unanalyzed.length === 0) {
-    return getAuditStatus(date, dateMode);
+    return getAuditStatus(date, dateMode, normalizedAgentEmail);
   }
 
   activeAudits.add(auditKey);
@@ -324,10 +398,10 @@ export async function runDailyAudit(date: string, dateMode: DateMode = 'activity
       activeAudits.delete(auditKey);
     });
 
-  return getAuditStatus(date, dateMode);
+  return getAuditStatus(date, dateMode, normalizedAgentEmail);
 }
 
-const AUDIT_CONCURRENCY = Math.max(1, Number(process.env.DAILY_AUDIT_CONCURRENCY || '2'));
+const GEMINI_CONCURRENCY = Math.max(1, Number(process.env.GEMINI_CONCURRENCY || '3'));
 const AUDIT_CHUNK_DELAY_MS = Math.max(250, Number(process.env.DAILY_AUDIT_CHUNK_DELAY_MS || '500'));
 
 async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyPick[]): Promise<void> {
@@ -366,112 +440,169 @@ async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyP
     return [category, subject, tagPart].filter(Boolean).join(' | ');
   }
 
-  async function analyzeOne(pick: DailyPick): Promise<void> {
-    try {
-      const stored = await getStoredTicketAnalysis(pick.ticketId);
-      if (stored) {
-        await markPickAnalyzed(date, dateMode, pick.ticketId, 'success');
-        return;
-      }
-
-      const ticket = await getTicketById(pick.ticketId);
-      if (!ticket) {
-        await markPickAnalyzed(date, dateMode, pick.ticketId, 'error');
-        return;
-      }
-
-      // Skip tickets with no messages — Gemini returns 400 on empty transcripts
-      const messagesRaw = ticket.MESSAGES_JSON;
-      if (!messagesRaw || messagesRaw === 'null' || messagesRaw.trim() === '[]' || messagesRaw.trim() === '') {
-        console.warn(`[DailyAudit] Skipping ticket ${pick.ticketId} — empty MESSAGES_JSON`);
-        await markPickAnalyzed(date, dateMode, pick.ticketId, 'error');
-        return;
-      }
-
-      let customerHistory: CustomerTicketHistory[] = [];
-      let auditMemories: AuditMemoryRecord[] = [];
-      const issueSignature = buildIssueSignature(ticket);
-      if (ticket.VISITOR_EMAIL) {
-        // Cache with error recovery — a failed fetch returns [] instead of poisoning the cache
-        if (!historyCache.has(ticket.VISITOR_EMAIL)) {
-          historyCache.set(ticket.VISITOR_EMAIL,
-            getCustomerHistory(ticket.VISITOR_EMAIL, 12).catch(err => {
-              console.warn(`[DailyAudit] History fetch failed for ${ticket.VISITOR_EMAIL}:`, err.message);
-              return [];
-            })
-          );
-        }
-        const rawHistory = await historyCache.get(ticket.VISITOR_EMAIL)!;
-        customerHistory = formatHistory(rawHistory, pick.ticketId, ticket.INITIALIZED_TIME);
-
-        const memoryKey = `${ticket.VISITOR_EMAIL.toLowerCase()}::${issueSignature}`;
-        if (!memoryCache.has(memoryKey)) {
-          memoryCache.set(memoryKey,
-            getRelevantAuditMemories(ticket.VISITOR_EMAIL, issueSignature, 2).catch(err => {
-              console.warn(`[DailyAudit] Memory fetch failed for ${memoryKey}:`, err.message);
-              return [];
-            })
-          );
-        }
-        auditMemories = await memoryCache.get(memoryKey)!;
-      }
-
-      // Extract message snippets for Groq quick analysis
-      const { firstCustomer, lastAgent, totalTurns } = parseMessagesForHybrid(messagesRaw);
-
-      // Run HYBRID analysis: Groq quick + Gemini deep in parallel
-      const hybridResult = await analyzeHybrid(
-        pick.ticketId,
-        messagesRaw,
-        firstCustomer,
-        lastAgent,
-        totalTurns,
-        ticket.GROUP_NAME,
-        ticket.TAGS,
-        customerHistory,
-        auditMemories
-      );
-
-      const analysis = hybridResult.merged;
-
-      // Log which path was used for debugging
-      console.log(`[DailyAudit] ticket=${pick.ticketId} path=${hybridResult.analysisPath} time=${hybridResult.totalTime}ms`);
-
-      // Persist to DB so TicketPage can retrieve without re-analyzing
-      await saveTicketAnalysis(pick.ticketId, analysis, 'daily_audit');
-      if (ticket.VISITOR_EMAIL) {
-        await saveAuditMemory({
-          customerEmail: ticket.VISITOR_EMAIL,
-          issueSignature,
-          category: ticket.GROUP_NAME,
-          subject: ticket.SUBJECT,
-          tags: ticket.TAGS,
-          ticketId: String(ticket.TICKET_ID),
-          ticketDate: ticket.DAY,
-          agentEmail: ticket.AGENT_EMAIL,
-          repeatIssue: Boolean(analysis.customerContext?.isRepeatIssue),
-          customerExperience: analysis.customerContext?.customerExperience || null,
-          customerContext: analysis.customerContext?.repeatIssueDetails || analysis.customerContext?.recommendation || null,
-          resolutionState: buildResolutionState(analysis),
-          resolutionNotes: buildResolutionNotes(analysis),
-          deductionSummary: buildDeductionSummary(analysis),
-          missedSteps: analysis.sopCompliance?.missedSteps?.join(' | ') || null,
-          suggestions: analysis.suggestions?.slice(0, 3).join(' | ') || null,
-          qaScore: analysis.qaScore ?? null,
-        });
-      }
+  // Pre-filter: skip already-stored picks
+  const unanalyzedPicks: DailyPick[] = [];
+  for (const pick of picks) {
+    const stored = await getStoredTicketAnalysis(pick.ticketId);
+    if (stored) {
       await markPickAnalyzed(date, dateMode, pick.ticketId, 'success');
-    } catch (error) {
-      console.error(`[DailyAudit] Failed ticket ${pick.ticketId}:`, (error as Error).message);
-      await markPickAnalyzed(date, dateMode, pick.ticketId, 'error');
+    } else {
+      unanalyzedPicks.push(pick);
     }
   }
 
-  // Process in concurrent chunks
-  for (let i = 0; i < picks.length; i += AUDIT_CONCURRENCY) {
-    const chunk = picks.slice(i, i + AUDIT_CONCURRENCY);
-    await Promise.all(chunk.map(analyzeOne));
-    if (i + AUDIT_CONCURRENCY < picks.length) {
+  if (unanalyzedPicks.length === 0) return;
+
+  // Pre-fetch ticket data for all unanalyzed picks
+  const ticketMap = new Map<string, any>();
+  await Promise.all(unanalyzedPicks.map(async (pick) => {
+    const ticket = await getTicketById(pick.ticketId);
+    if (ticket) ticketMap.set(pick.ticketId, ticket);
+  }));
+
+  const validPicks = unanalyzedPicks.filter(p => {
+    const ticket = ticketMap.get(p.ticketId);
+    if (!ticket) {
+      markPickAnalyzed(date, dateMode, p.ticketId, 'error').catch(() => {});
+      return false;
+    }
+    const raw = ticket.MESSAGES_JSON;
+    if (!raw || raw === 'null' || raw.trim() === '[]' || raw.trim() === '') {
+      console.warn(`[DailyAudit] Skipping ticket ${p.ticketId} — empty MESSAGES_JSON`);
+      markPickAnalyzed(date, dateMode, p.ticketId, 'error').catch(() => {});
+      return false;
+    }
+    return true;
+  });
+
+  if (validPicks.length === 0) return;
+
+  // Stage 1 — Triage all picks in parallel (GROQ_CONCURRENCY chunks)
+  console.log(`[DailyAudit] Stage 1: triaging ${validPicks.length} tickets...`);
+  const digestMap = new Map<string, TriageDigest>();
+  for (let i = 0; i < validPicks.length; i += GROQ_CONCURRENCY) {
+    const chunk = validPicks.slice(i, i + GROQ_CONCURRENCY);
+    await Promise.all(chunk.map(async (pick) => {
+      const ticket = ticketMap.get(pick.ticketId)!;
+      const { firstCustomer, lastAgent, totalTurns } = parseMessagesForHybrid(ticket.MESSAGES_JSON);
+      try {
+        const digest = await triageTicket(pick.ticketId, firstCustomer, lastAgent, totalTurns);
+        digestMap.set(pick.ticketId, digest);
+      } catch (err) {
+        console.warn(`[DailyAudit] Triage failed for ${pick.ticketId}:`, (err as Error).message);
+      }
+    }));
+  }
+
+  // Stage 2 — Judge all picks in parallel with digests (GEMINI_CONCURRENCY chunks)
+  console.log(`[DailyAudit] Stage 2: judging ${validPicks.length} tickets...`);
+  for (let i = 0; i < validPicks.length; i += GEMINI_CONCURRENCY) {
+    const chunk = validPicks.slice(i, i + GEMINI_CONCURRENCY);
+    await Promise.all(chunk.map(async (pick) => {
+      const judgeStart = Date.now();
+      try {
+        const ticket = ticketMap.get(pick.ticketId)!;
+        const triage = digestMap.get(pick.ticketId);
+        const issueSignature = buildIssueSignature(ticket);
+
+        let customerHistory: CustomerTicketHistory[] = [];
+        let auditMemories: AuditMemoryRecord[] = [];
+        if (ticket.VISITOR_EMAIL) {
+          if (!historyCache.has(ticket.VISITOR_EMAIL)) {
+            historyCache.set(ticket.VISITOR_EMAIL,
+              getCustomerHistory(ticket.VISITOR_EMAIL, 12).catch(err => {
+                console.warn(`[DailyAudit] History fetch failed for ${ticket.VISITOR_EMAIL}:`, err.message);
+                return [];
+              })
+            );
+          }
+          const rawHistory = await historyCache.get(ticket.VISITOR_EMAIL)!;
+          customerHistory = formatHistory(rawHistory, pick.ticketId, ticket.INITIALIZED_TIME);
+
+          const memoryKey = `${ticket.VISITOR_EMAIL.toLowerCase()}::${issueSignature}`;
+          if (!memoryCache.has(memoryKey)) {
+            memoryCache.set(memoryKey,
+              getRelevantAuditMemories(ticket.VISITOR_EMAIL, issueSignature, 2).catch(err => {
+                console.warn(`[DailyAudit] Memory fetch failed for ${memoryKey}:`, err.message);
+                return [];
+              })
+            );
+          }
+          auditMemories = await memoryCache.get(memoryKey)!;
+        }
+
+        let analysis: any;
+        let isFallback = false;
+        let analysisPath = triage ? 'triage+judge' : 'judge-only';
+
+        try {
+          analysis = await analyzeTicket(
+            pick.ticketId,
+            ticket.MESSAGES_JSON,
+            ticket.GROUP_NAME,
+            ticket.TAGS,
+            customerHistory,
+            auditMemories,
+            triage
+          );
+        } catch (geminiErr) {
+          if (triage) {
+            const { convertDigestToProvisionalAnalysis } = await import('./groq.service.js');
+            analysis = convertDigestToProvisionalAnalysis(triage);
+            isFallback = true;
+            analysisPath = 'triage-only';
+            console.warn(`[DailyAudit] Gemini failed for ${pick.ticketId}, using triage fallback`);
+          } else {
+            throw geminiErr;
+          }
+        }
+
+        console.log(JSON.stringify({
+          event: 'audit_ticket',
+          ticketId: pick.ticketId,
+          analysisPath,
+          isFallback,
+          triageMs: digestMap.has(pick.ticketId) ? (triage?.analyzeTime || 0) : 0,
+          judgeMs: Date.now() - judgeStart,
+        }));
+
+        const extendedAnalysis = { ...analysis, triage: triage || null, isFallback, analysisPath };
+        await saveTicketAnalysis(pick.ticketId, extendedAnalysis, 'daily_audit');
+
+        if (!isFallback) {
+          saveQAScore(pick.ticketId, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
+            console.error('[DailyAudit] Failed to persist QA score:', e)
+          );
+        }
+
+        if (ticket.VISITOR_EMAIL) {
+          await saveAuditMemory({
+            customerEmail: ticket.VISITOR_EMAIL,
+            issueSignature,
+            category: ticket.GROUP_NAME,
+            subject: ticket.SUBJECT,
+            tags: ticket.TAGS,
+            ticketId: String(ticket.TICKET_ID),
+            ticketDate: ticket.DAY,
+            agentEmail: ticket.AGENT_EMAIL,
+            repeatIssue: Boolean(analysis.customerContext?.isRepeatIssue),
+            customerExperience: analysis.customerContext?.customerExperience || null,
+            customerContext: analysis.customerContext?.repeatIssueDetails || analysis.customerContext?.recommendation || null,
+            resolutionState: buildResolutionState(analysis),
+            resolutionNotes: buildResolutionNotes(analysis),
+            deductionSummary: buildDeductionSummary(analysis),
+            missedSteps: analysis.sopCompliance?.missedSteps?.join(' | ') || null,
+            suggestions: analysis.suggestions?.slice(0, 3).join(' | ') || null,
+            qaScore: isFallback ? null : (analysis.qaScore ?? null),
+          });
+        }
+        await markPickAnalyzed(date, dateMode, pick.ticketId, 'success');
+      } catch (error) {
+        console.error(`[DailyAudit] Failed ticket ${pick.ticketId}:`, (error as Error).message);
+        await markPickAnalyzed(date, dateMode, pick.ticketId, 'error');
+      }
+    }));
+    if (i + GEMINI_CONCURRENCY < validPicks.length) {
       await new Promise(r => setTimeout(r, AUDIT_CHUNK_DELAY_MS));
     }
   }
@@ -481,8 +612,8 @@ async function syncExistingAnalyses(date: string, dateMode: DateMode): Promise<v
   await syncDailyPickAnalysisFlags(date, dateMode);
 }
 
-function getAuditKey(date: string, dateMode: DateMode): string {
-  return `${date}:${dateMode}`;
+function getAuditKey(date: string, dateMode: DateMode, agentEmail?: string): string {
+  return agentEmail ? `${date}:${dateMode}:${agentEmail}` : `${date}:${dateMode}`;
 }
 
 function normalizeSignaturePart(value: string): string {

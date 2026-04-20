@@ -41,8 +41,15 @@ export const agentsApi = {
     api.get(`/agents/defaulters?minIssues=${minIssues}&days=${days}`),
   getQATrend: (email: string, limit = 14) =>
     api.get(`/agents/${encodeURIComponent(email)}/qa-trend?limit=${limit}`),
+  getQATrends: (emails: string[], limit = 14) =>
+    api.get(`/agents/qa-trends?${new URLSearchParams({
+      emails: emails.join(','),
+      limit: String(limit),
+    }).toString()}`),
   getReportCard: (email: string, date: string, dateMode: DateMode = 'activity') =>
     api.get(`/agents/${encodeURIComponent(email)}/report-card?date=${date}&dateMode=${dateMode}`, { timeout: 120000 }),
+  auditNow: (email: string, date: string, dateMode: DateMode = 'activity', count = 10) =>
+    api.post('/agents/audit-now', { email, date, dateMode, count }, { timeout: 120000 }),
 };
 
 export const ticketsApi = {
@@ -79,10 +86,32 @@ export const customersApi = {
 };
 
 export const dailyPicksApi = {
-  getPicks: (date: string, dateMode: DateMode = 'activity') =>
-    api.get(`/daily-picks?date=${date}&dateMode=${dateMode}`),
-  runAudit: (date: string, dateMode: DateMode = 'activity') =>
-    api.post('/daily-picks/run-audit', { date, dateMode }, { timeout: 300000 }),
-  getStatus: (date: string, dateMode: DateMode = 'activity') =>
-    api.get(`/daily-picks/status?date=${date}&dateMode=${dateMode}`),
+  getPicks: (
+    date: string,
+    dateMode: DateMode = 'activity',
+    agentEmail?: string,
+    autoGenerate = true
+  ) =>
+    api.get(`/daily-picks?${new URLSearchParams({
+      date,
+      dateMode,
+      ...(agentEmail ? { agentEmail } : {}),
+      autoGenerate: String(autoGenerate),
+    }).toString()}`),
+  runAudit: (
+    date: string,
+    dateMode: DateMode = 'activity',
+    options?: {
+      agentEmail?: string;
+      count?: number;
+      randomizeSample?: boolean;
+    }
+  ) =>
+    api.post('/daily-picks/run-audit', { date, dateMode, ...options }, { timeout: 300000 }),
+  getStatus: (date: string, dateMode: DateMode = 'activity', agentEmail?: string) =>
+    api.get(`/daily-picks/status?${new URLSearchParams({
+      date,
+      dateMode,
+      ...(agentEmail ? { agentEmail } : {}),
+    }).toString()}`),
 };

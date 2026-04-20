@@ -159,10 +159,12 @@ export default function AgentDetailPage() {
   }, [urlDate, urlDateMode, selectedDate, storeDateMode, setSelectedDate, setStoreDateMode]);
 
   useEffect(() => {
-    if (!selectedDate && latestDate && !urlDate) {
+    if (!latestDate || urlDate) return;
+    const available: string[] = datesData?.data?.dates || [];
+    if (!selectedDate || (available.length > 0 && !available.includes(selectedDate))) {
       setSelectedDate(latestDate);
     }
-  }, [latestDate, selectedDate, urlDate, setSelectedDate]);
+  }, [latestDate, selectedDate, urlDate, datesData, setSelectedDate]);
 
   const decodedEmail = decodeURIComponent(email || '');
   const agentName = decodedEmail.split('@')[0].replace(/[._]/g, ' ').replace(/_ext$/, '');
@@ -176,39 +178,50 @@ export default function AgentDetailPage() {
   });
 
   const { data: picksData } = useQuery({
-    queryKey: ['daily-picks', date, dateMode],
-    queryFn: () => dailyPicksApi.getPicks(date, dateMode).then((response) => response.data),
-    enabled: !!date,
+    queryKey: ['daily-picks', date, dateMode, decodedEmail],
+    queryFn: () => dailyPicksApi.getPicks(date, dateMode, decodedEmail, false).then((response) => response.data),
+    enabled: !!date && !!decodedEmail,
+    staleTime: 1000 * 10,
+    refetchInterval: (query) => ((query.state.data as any)?.inProgress ? 3000 : false),
+  });
+
+  const { data: auditStatusData } = useQuery({
+    queryKey: ['daily-picks-status', date, dateMode, decodedEmail],
+    queryFn: () => dailyPicksApi.getStatus(date, dateMode, decodedEmail).then((response) => response.data),
+    enabled: !!date && !!decodedEmail,
     staleTime: 0,
-    refetchOnMount: 'always',
+    refetchInterval: (query) => ((query.state.data as any)?.inProgress ? 2000 : false),
   });
 
   const tickets: AgentTicketRow[] = ticketsData?.data?.tickets || [];
-  const ticketIds = tickets.map((ticket) => String(ticket.TICKET_ID));
+  const relevantTicketIds = tickets
+    .filter((ticket) => isResolvedStatus(ticket.TICKET_STATUS))
+    .map((ticket) => String(ticket.TICKET_ID));
 
   const { data: reviewsData } = useQuery({
-    queryKey: ['reviews', ticketIds.join(',')],
-    queryFn: () => analysisApi.getReviews(ticketIds),
-    enabled: ticketIds.length > 0,
-    staleTime: 0,
-    refetchOnMount: 'always',
+    queryKey: ['reviews', relevantTicketIds.join(',')],
+    queryFn: () => analysisApi.getReviews(relevantTicketIds),
+    enabled: relevantTicketIds.length > 0,
+    staleTime: 1000 * 10,
   });
   const reviews: Record<string, QAReview> = reviewsData?.data?.reviews || {};
 
   const { data: scoresData } = useQuery({
-    queryKey: ['cached-scores', ticketIds.join(',')],
-    queryFn: () => analysisApi.getCachedScores(ticketIds),
-    enabled: ticketIds.length > 0,
-    staleTime: 0,
-    refetchOnMount: 'always',
+    queryKey: ['cached-scores', relevantTicketIds.join(',')],
+    queryFn: () => analysisApi.getCachedScores(relevantTicketIds),
+    enabled: relevantTicketIds.length > 0,
+    staleTime: 1000 * 10,
+    refetchInterval: auditStatusData?.inProgress ? 3000 : false,
   });
   const cachedScores: Record<string, ScoreEntry> = scoresData?.data?.scores || {};
+  const fallbackIds: Set<string> = new Set(scoresData?.data?.fallbackIds || []);
 
   const { data: insightsData } = useQuery({
     queryKey: ['agent-insights', decodedEmail, date, dateMode],
     queryFn: () => analysisApi.getAgentInsights(decodedEmail, date, dateMode),
     enabled: !!decodedEmail && !!date,
     staleTime: 1000 * 60,
+    refetchInterval: auditStatusData?.inProgress ? 4000 : false,
   });
   const insightsResult = insightsData?.data;
 
@@ -232,10 +245,7 @@ export default function AgentDetailPage() {
     setReportCard(null);
   };
 
-  const allAgentPicks: AgentDailyPick[] = (picksData?.picks || []).filter(
-    (pick: AgentDailyPick) => pick.agentEmail === decodedEmail
-  );
-  const samplePicks = [...allAgentPicks].sort((left, right) => left.pickOrder - right.pickOrder);
+  const samplePicks: AgentDailyPick[] = [...(picksData?.picks || [])].sort((left, right) => left.pickOrder - right.pickOrder);
   const sampleIdSet = new Set(samplePicks.map((pick) => String(pick.ticketId)));
 
   const sampleRows = samplePicks.map((pick) => {
@@ -265,8 +275,8 @@ export default function AgentDetailPage() {
     return Number.isFinite(numericCsat) && numericCsat > 0 && numericCsat < 3;
   }).length;
 
-  const issueBreakdown = tickets.reduce<Record<string, number>>((acc, ticket) => {
-    const subject = ticket.SUBJECT || 'Unknown';
+  const issueBreakdown = sampleRows.reduce<Record<string, number>>((acc, row) => {
+    const subject = row.pick.ticket?.subject || 'Unknown';
     acc[subject] = (acc[subject] || 0) + 1;
     return acc;
   }, {});
@@ -280,16 +290,22 @@ export default function AgentDetailPage() {
   const sampleFlaggedCount = sampleRows.filter((row) => row.review?.status === 'flagged').length;
   const reportReady = sampleRows.length > 0 && sampleRows.every((row) => row.score && row.review);
 
-  const auditSampleMutation = useMutation({
+  const auditNowMutation = useMutation({
     mutationFn: async () => {
-      const sampleTicketIds = sampleRows.map((row) => String(row.pick.ticketId));
-      return analysisApi.batchAnalyze(date, decodedEmail, sampleTicketIds.length, dateMode, sampleTicketIds);
+      const response = await dailyPicksApi.runAudit(date, dateMode, {
+        agentEmail: decodedEmail,
+        count: 10,
+        randomizeSample: true,
+      });
+      return response.data;
     },
     onSuccess: async () => {
       setReportCard(null);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] }),
-        queryClient.invalidateQueries({ queryKey: ['cached-scores', ticketIds.join(',')] }),
+        queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode, decodedEmail] }),
+        queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode, decodedEmail] }),
+        queryClient.invalidateQueries({ queryKey: ['cached-scores', relevantTicketIds.join(',')] }),
+        queryClient.invalidateQueries({ queryKey: ['reviews', relevantTicketIds.join(',')] }),
         queryClient.invalidateQueries({ queryKey: ['agent-insights', decodedEmail, date, dateMode] }),
       ]);
     },
@@ -597,17 +613,23 @@ export default function AgentDetailPage() {
               Daily Audit Sample
             </h2>
             <p className="text-sm text-slate-500 mt-1">
-              AI/algo-picked 10-ticket sample for {formatAgentName(decodedEmail)} on {date}. Review all sampled audits, then generate a report card for the day.
+              Click `Run Audits` to instantly create a random 10-ticket sample for this agent, start auditing it right away, and refresh the Groq summary on this page.
             </p>
+            {auditStatusData?.inProgress && (
+              <p className="text-xs text-uh-purple mt-2 flex items-center gap-1.5">
+                <Loader2 size={12} className="animate-spin" />
+                Audit is running in the background. Scores and Groq summary will update automatically.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <button
-              onClick={() => auditSampleMutation.mutate()}
-              disabled={sampleRows.length === 0 || auditSampleMutation.isPending}
+              onClick={() => auditNowMutation.mutate()}
+              disabled={auditNowMutation.isPending}
               className="btn-primary flex items-center gap-2 text-sm !px-4 !py-2.5 disabled:opacity-50"
             >
-              {auditSampleMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-              Audit Picked 10
+              {auditNowMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+              Run Audits
             </button>
             <button
               onClick={() => reportCardMutation.mutate()}
@@ -649,8 +671,14 @@ export default function AgentDetailPage() {
           </div>
         )}
 
+        {auditNowMutation.isError && (
+          <div className="mb-4 p-3 rounded-xl bg-uh-error/10 text-uh-error text-sm">
+            {(auditNowMutation.error as any)?.response?.data?.error || (auditNowMutation.error as Error)?.message || 'Failed to audit random sample'}
+          </div>
+        )}
+
         {sampleRows.length === 0 ? (
-          <p className="text-sm text-slate-400">No daily picks were available for this agent on this date.</p>
+          <p className="text-sm text-slate-400">No sample exists yet for this agent on this date. Click `Run Audits` to generate one instantly.</p>
         ) : (
           <div className="space-y-3">
             {sampleRows.map((row) => (
@@ -681,7 +709,12 @@ export default function AgentDetailPage() {
                           Review pending
                         </span>
                       )}
-                      {!row.score && (
+                      {!row.score && fallbackIds.has(String(row.pick.ticketId)) && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-uh-warning/15 text-uh-warning border border-uh-warning/30">
+                          Triage-only — Gemini unavailable
+                        </span>
+                      )}
+                      {!row.score && !fallbackIds.has(String(row.pick.ticketId)) && (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-200 text-slate-500">
                           Audit pending
                         </span>
@@ -833,25 +866,27 @@ export default function AgentDetailPage() {
         </div>
       )}
 
-      <div className="card mb-6">
-        <h2 className="text-lg font-semibold mb-4">Issue Breakdown</h2>
-        {sortedIssues.length === 0 ? (
-          <p className="text-slate-400 text-center py-8">No tickets found</p>
-        ) : (
-          <div className="space-y-2 max-h-[420px] overflow-y-auto">
-            {sortedIssues.map(([subject, count]) => (
-              <div key={subject} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-all">
-                <span className="text-sm truncate flex-1 mr-4" title={subject}>
-                  {subject.length > 60 ? `${subject.substring(0, 60)}...` : subject}
-                </span>
-                <span className="px-3 py-1 rounded-full text-sm font-semibold bg-uh-purple/20 text-uh-purple">
-                  {count}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {sampleRows.length > 0 && (
+        <div className="card mb-6">
+          <h2 className="text-lg font-semibold mb-4">Issue Breakdown</h2>
+          {sortedIssues.length === 0 ? (
+            <p className="text-slate-400 text-center py-8">No tickets found</p>
+          ) : (
+            <div className="space-y-2 max-h-[420px] overflow-y-auto">
+              {sortedIssues.map(([subject, count]) => (
+                <div key={subject} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-all">
+                  <span className="text-sm truncate flex-1 mr-4" title={subject}>
+                    {subject.length > 60 ? `${subject.substring(0, 60)}...` : subject}
+                  </span>
+                  <span className="px-3 py-1 rounded-full text-sm font-semibold bg-uh-purple/20 text-uh-purple">
+                    {count}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <details className="card group">
         <summary className="list-none cursor-pointer flex items-center justify-between gap-4">

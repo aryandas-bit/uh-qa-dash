@@ -15,7 +15,8 @@ export default function DatePicker({
 }: DatePickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const today = startOfDay(new Date());
-  const currentDate = new Date(selectedDate);
+  const [y, m, d] = selectedDate.split('-').map(Number);
+  const currentDate = new Date(y, m - 1, d);
 
   const canGoForward = !isAfter(addDays(currentDate, 1), today);
 

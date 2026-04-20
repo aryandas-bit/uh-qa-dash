@@ -38,12 +38,14 @@ export default function TicketsPage() {
     if (urlDateMode && urlDateMode !== storeDateMode) setStoreDateMode(urlDateMode);
   }, [urlDate, urlDateMode, selectedDate, storeDateMode, setSelectedDate, setStoreDateMode]);
 
-  // Initial fallback to latest date if nothing is set
+  // Initial fallback to latest date if nothing is set or if the selected date is outdated
   useEffect(() => {
-    if (!selectedDate && latestDate && !urlDate) {
+    if (!latestDate || urlDate) return;
+    const available: string[] = datesData?.data?.dates || [];
+    if (!selectedDate || (available.length > 0 && !available.includes(selectedDate))) {
       setSelectedDate(latestDate);
     }
-  }, [latestDate, selectedDate, urlDate, setSelectedDate]);
+  }, [latestDate, selectedDate, urlDate, datesData, setSelectedDate]);
 
   const { data: agentsData, isLoading } = useQuery({
     queryKey: ['agents-daily', date, dateMode],
@@ -53,6 +55,15 @@ export default function TicketsPage() {
   });
 
   const agents: any[] = agentsData?.data?.agents || [];
+  const agentEmails = agents.map((agent) => agent.agentEmail).filter(Boolean);
+
+  const { data: trendMapData } = useQuery({
+    queryKey: ['agent-qa-trends', agentEmails.join(','), 7],
+    queryFn: () => agentsApi.getQATrends(agentEmails, 7),
+    enabled: agentEmails.length > 0,
+    staleTime: 1000 * 60 * 10,
+  });
+  const trendMap = trendMapData?.data?.trends || {};
 
   const filtered = agents.filter((a) => {
     const name = (a.agentEmail || '').toLowerCase();
@@ -138,6 +149,7 @@ export default function TicketsPage() {
             <AgentCardRow 
               key={agent.agentEmail} 
               agent={agent} 
+              trend={trendMap[agent.agentEmail] || []}
               onClick={() => handleAgentClick(agent.agentEmail)} 
             />
           ))}
@@ -147,17 +159,11 @@ export default function TicketsPage() {
   );
 }
 
-function AgentCardRow({ agent, onClick }: { 
+function AgentCardRow({ agent, trend, onClick }: { 
   agent: any, 
+  trend: Array<{ date: string; avgScore: number }>,
   onClick: () => void 
 }) {
-  const { data: trendData } = useQuery({
-    queryKey: ['agent-qa-trend', agent.agentEmail],
-    queryFn: () => agentsApi.getQATrend(agent.agentEmail, 7),
-    staleTime: 1000 * 60 * 10,
-  });
-
-  const trend = trendData?.data?.trend || [];
   const name = (agent.agentEmail || '').split('@')[0].replace(/[._]/g, ' ');
   const initial = getAvatarInitial(name);
   const color = getAvatarColor(name);

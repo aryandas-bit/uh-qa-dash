@@ -171,13 +171,22 @@ export interface DailyPick {
   analysisStatus: string | null;
 }
 
-export async function getDailyPicksFromDb(date: string, dateMode: DateMode = 'activity'): Promise<DailyPick[]> {
+export async function getDailyPicksFromDb(
+  date: string,
+  dateMode: DateMode = 'activity',
+  agentEmail?: string
+): Promise<DailyPick[]> {
   await initPromise;
+  const hasAgentFilter = Boolean(agentEmail);
   const result = await reviewsDb.execute({
     sql: `SELECT pick_date as pickDate, date_mode as dateMode, agent_email as agentEmail, ticket_id as ticketId,
                  pick_order as pickOrder, risk_score as riskScore, pick_reason as pickReason, analyzed, analysis_status as analysisStatus
-          FROM daily_picks WHERE pick_date = ? AND date_mode = ? ORDER BY agent_email, pick_order`,
-    args: [date, dateMode],
+          FROM daily_picks
+          WHERE pick_date = ?
+            AND date_mode = ?
+            ${hasAgentFilter ? 'AND agent_email = ?' : ''}
+          ORDER BY agent_email, pick_order`,
+    args: hasAgentFilter ? [date, dateMode, agentEmail as string] : [date, dateMode],
   });
   return (result.rows as unknown as any[]).map(r => ({
     ...r,
@@ -216,6 +225,14 @@ export async function clearDailyPicks(date: string, dateMode: DateMode = 'activi
   await reviewsDb.execute({
     sql: `DELETE FROM daily_picks WHERE pick_date = ? AND date_mode = ?`,
     args: [date, dateMode],
+  });
+}
+
+export async function clearDailyPicksForAgent(date: string, dateMode: DateMode = 'activity', agentEmail: string): Promise<void> {
+  await initPromise;
+  await reviewsDb.execute({
+    sql: `DELETE FROM daily_picks WHERE pick_date = ? AND date_mode = ? AND agent_email = ?`,
+    args: [date, dateMode, agentEmail],
   });
 }
 
@@ -316,9 +333,14 @@ export interface DailyPickCandidate {
   ticketStatus: string | null;
 }
 
-export async function getDailyPickCandidates(date: string, dateMode: DateMode = 'activity'): Promise<DailyPickCandidate[]> {
+export async function getDailyPickCandidates(
+  date: string,
+  dateMode: DateMode = 'activity',
+  agentEmail?: string
+): Promise<DailyPickCandidate[]> {
   await initMainPromise;
   const dateCondition = dateMode === 'initialized' ? 'DATE(INITIALIZED_TIME) = ?' : 'DAY = ?';
+  const hasAgentFilter = Boolean(agentEmail);
   const result = await mainDb.execute({
     sql: `SELECT
             AGENT_EMAIL as agentEmail,
@@ -335,10 +357,11 @@ export async function getDailyPickCandidates(date: string, dateMode: DateMode = 
           WHERE ${dateCondition}
             AND AGENT_EMAIL IS NOT NULL
             AND AGENT_EMAIL != ''
+            ${hasAgentFilter ? 'AND AGENT_EMAIL = ?' : ''}
             AND TICKET_ID IS NOT NULL
           GROUP BY AGENT_EMAIL, TICKET_ID
           ORDER BY AGENT_EMAIL ASC`,
-    args: [date],
+    args: hasAgentFilter ? [date, agentEmail as string] : [date],
   });
   return (result.rows as unknown as any[]).map((row) => ({
     ticketId: String(row.ticketId),
@@ -1237,6 +1260,50 @@ export async function getAgentQATrend(agentEmail: string, limitDays = 14): Promi
       avgScore: Number(r.avgScore)
     }))
     .reverse(); // Chronological order
+}
+
+export async function getAgentsQATrends(
+  agentEmails: string[],
+  limitDays = 14
+): Promise<Record<string, Array<{ date: string; avgScore: number }>>> {
+  await initPromise;
+  if (agentEmails.length === 0) return {};
+
+  const uniqueEmails = [...new Set(agentEmails.filter(Boolean))];
+  if (uniqueEmails.length === 0) return {};
+
+  const placeholders = uniqueEmails.map(() => '?').join(',');
+  const result = await reviewsDb.execute({
+    sql: `SELECT agent_email as agentEmail, date, avg_score as avgScore
+          FROM daily_agent_qa_scores
+          WHERE agent_email IN (${placeholders})
+          ORDER BY agent_email ASC, date DESC`,
+    args: uniqueEmails,
+  });
+
+  const trends: Record<string, Array<{ date: string; avgScore: number }>> = {};
+  uniqueEmails.forEach((email) => {
+    trends[email] = [];
+  });
+
+  (result.rows as unknown as Array<{ agentEmail: string; date: string; avgScore: number }>).forEach((row) => {
+    const email = String(row.agentEmail);
+    if (!trends[email]) {
+      trends[email] = [];
+    }
+    if (trends[email].length < limitDays) {
+      trends[email].push({
+        date: String(row.date),
+        avgScore: Number(row.avgScore),
+      });
+    }
+  });
+
+  Object.keys(trends).forEach((email) => {
+    trends[email] = trends[email].slice().reverse();
+  });
+
+  return trends;
 }
 
 // Bulk-fetch persisted QA scores for a list of ticket IDs
