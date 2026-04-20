@@ -53,8 +53,6 @@ export default function DashboardPage() {
     }
   }, [latestDate, selectedDate, setSelectedDate]);
 
-  const effectiveDate = selectedDate || latestDate || '';
-
   // Fetch daily insights
   const { data: insightsData, isLoading: insightsLoading } = useQuery({
     queryKey: ['insights', effectiveDate, dateMode],
