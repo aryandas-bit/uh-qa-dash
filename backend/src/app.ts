@@ -12,11 +12,6 @@ import { dailyPicksRouter } from './routes/dailypicks.js';
 import { authRouter } from './routes/auth.js';
 import { requireAuth } from './middleware/requireAuth.js';
 
-if (!process.env.JWT_SECRET) {
-  console.error('[Startup] FATAL: JWT_SECRET environment variable is not set');
-  process.exit(1);
-}
-
 const app = express();
 const PORT = process.env.PORT || 3001;
 
