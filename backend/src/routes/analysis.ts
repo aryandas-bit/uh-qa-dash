@@ -310,13 +310,21 @@ router.get('/ticket/:id', async (req, res) => {
       });
     }
 
-    // Persist full analysis to DB and warm memory cache
-    await saveTicketAnalysis(id, analysis, 'manual');
-    analysisCache.set(id, analysis);
-    // Also persist score for quick bulk lookup
-    saveQAScore(id, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
-      console.error('[Analysis] Failed to persist QA score:', e)
-    );
+    // Persist extended analysis (includes triage digest + fallback flag) to DB
+    const extendedAnalysis = {
+      ...analysis,
+      triage: hybridResult.triage || null,
+      isFallback: hybridResult.isFallback,
+      analysisPath: hybridResult.analysisPath,
+    };
+    await saveTicketAnalysis(id, extendedAnalysis, 'manual');
+    analysisCache.set(id, extendedAnalysis);
+    // Only persist QA score if Gemini was the source (not a fallback)
+    if (!hybridResult.isFallback) {
+      saveQAScore(id, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
+        console.error('[Analysis] Failed to persist QA score:', e)
+      );
+    }
 
     const review = await getQAReview(id);
 
@@ -336,9 +344,11 @@ router.get('/ticket/:id', async (req, res) => {
       },
       analysisInfo: {
         path: hybridResult.analysisPath,
+        isFallback: hybridResult.isFallback,
+        triage: hybridResult.triage || null,
+        triageMs: hybridResult.triageMs,
+        judgeMs: hybridResult.judgeMs,
         totalTime: hybridResult.totalTime,
-        groqQuick: hybridResult.groqQuick,
-        geminiDeep: (hybridResult.geminiDeep && 'error' in hybridResult.geminiDeep) ? { error: hybridResult.geminiDeep.error } : undefined
       }
     });
   } catch (error: any) {
@@ -606,15 +616,17 @@ router.get('/agent/:email/summary', async (req, res) => {
 router.get('/cached-scores', async (req, res) => {
   try {
     const ticketIdsParam = req.query.ticketIds as string;
-    if (!ticketIdsParam) return res.json({ scores: {} });
+    if (!ticketIdsParam) return res.json({ scores: {}, fallbackIds: [] });
 
     const ticketIds = ticketIdsParam.split(',').map((id: string) => id.trim()).filter(Boolean);
 
     // Primary: read from the persistent DB table
     const dbScores = await getQAScoresBulk(ticketIds);
 
+    const fallbackIds: string[] = [];
+
     // Supplement with in-memory cache for tickets not yet in DB
-    ticketIds.forEach(id => {
+    for (const id of ticketIds) {
       if (!dbScores[id]) {
         const cached = analysisCache.get<any>(id);
         if (cached?.qaScore !== undefined) {
@@ -623,11 +635,20 @@ router.get('/cached-scores', async (req, res) => {
             summary: cached.summary || null,
             deductions: cached.deductions || [],
           };
+        } else if (cached?.isFallback) {
+          // Analyzed but Gemini failed — triage-only provisional score
+          fallbackIds.push(id);
+        } else {
+          // Check DB for cross-session fallback state
+          const stored = await getStoredTicketAnalysis(id);
+          if (stored && (stored as any).isFallback) {
+            fallbackIds.push(id);
+          }
         }
       }
-    });
+    }
 
-    return res.json({ scores: dbScores });
+    return res.json({ scores: dbScores, fallbackIds });
   } catch (error) {
     console.error('Error fetching cached scores:', error);
     return res.status(500).json({ error: 'Failed to fetch scores' });

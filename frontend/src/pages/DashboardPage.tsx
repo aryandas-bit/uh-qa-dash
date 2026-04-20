@@ -1,6 +1,5 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import {
   Users,
   ChevronRight,
@@ -13,19 +12,11 @@ import {
   Frown,
   Clock,
   CheckCircle,
-  Play,
-  Loader2,
-  X,
-  CheckCircle2,
-  AlertCircle,
-  RefreshCw,
   Inbox
 } from 'lucide-react';
 import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { api, agentsApi, ticketsApi, dailyPicksApi } from '../api/client';
-import type { DateMode } from '../api/client';
-import { getAvatarColor, getAvatarInitial } from '../utils/avatarColors';
+import { agentsApi, ticketsApi } from '../api/client';
 import AgentTrendSparkline from '../components/agent/AgentTrendSparkline';
 import { useDateStore } from '../store/dateStore';
 import { useEffect } from 'react';
@@ -46,12 +37,14 @@ export default function DashboardPage() {
   // Picker always has a value — shows today as placeholder while dates are loading
   const pickerDate = effectiveDate || new Date().toISOString().slice(0, 10);
 
-  // Auto-select the latest available date once loaded IF no date is already selected
+  // Auto-select the latest available date if none is selected or if the selected date is outdated
   useEffect(() => {
-    if (!selectedDate && latestDate) {
+    if (!latestDate) return;
+    const available: string[] = datesData?.data?.dates || [];
+    if (!selectedDate || (available.length > 0 && !available.includes(selectedDate))) {
       setSelectedDate(latestDate);
     }
-  }, [latestDate, selectedDate, setSelectedDate]);
+  }, [latestDate, selectedDate, datesData, setSelectedDate]);
 
   // Fetch daily insights
   const { data: insightsData, isLoading: insightsLoading } = useQuery({
@@ -67,6 +60,15 @@ export default function DashboardPage() {
   const topIssues = insights.topIssues || [];
   const bestAgents = insights.bestAgents || [];
   const frustratedCustomers = insights.frustratedCustomers || [];
+  const bestAgentEmails = bestAgents.map((agent: any) => agent.agentEmail).filter(Boolean);
+
+  const { data: trendMapData } = useQuery({
+    queryKey: ['agent-qa-trends', bestAgentEmails.join(','), 7],
+    queryFn: () => agentsApi.getQATrends(bestAgentEmails, 7),
+    enabled: bestAgentEmails.length > 0,
+    staleTime: 1000 * 60 * 10,
+  });
+  const trendMap = trendMapData?.data?.trends || {};
 
   const formatTime = (seconds: number | null) => {
     if (seconds === null || seconds === undefined) return '-';
@@ -239,6 +241,7 @@ export default function DashboardPage() {
                       idx={idx} 
                       effectiveDate={effectiveDate} 
                       dateMode={dateMode} 
+                      trend={trendMap[agent.agentEmail] || []}
                     />
                   ))}
                 </div>
@@ -279,9 +282,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Daily Audit Section */}
-          {effectiveDate && <DailyAuditSection date={effectiveDate} dateMode={dateMode} />}
-
           {/* Browse agents CTA — agent list lives on the Tickets tab */}
           <Link
             to={`/tickets?date=${effectiveDate}&dateMode=${dateMode}`}
@@ -310,20 +310,13 @@ export default function DashboardPage() {
   );
 }
 
-function BestAgentRow({ agent, idx, effectiveDate, dateMode }: { 
+function BestAgentRow({ agent, idx, effectiveDate, dateMode, trend }: { 
   agent: any, 
   idx: number, 
   effectiveDate: string, 
-  dateMode: string 
+  dateMode: string,
+  trend: Array<{ date: string; avgScore: number }>
 }) {
-  const { data: trendData } = useQuery({
-    queryKey: ['agent-qa-trend', agent.agentEmail],
-    queryFn: () => agentsApi.getQATrend(agent.agentEmail, 7),
-    staleTime: 1000 * 60 * 10,
-  });
-
-  const trend = trendData?.data?.trend || [];
-
   function formatAgentName(email?: string) {
     if (!email) return 'Unknown Agent';
     return email
@@ -365,319 +358,3 @@ function BestAgentRow({ agent, idx, effectiveDate, dateMode }: {
 }
 
 // Daily Audit Section — shows picks and allows triggering batch analysis
-type DailyPickRow = {
-  pickDate: string;
-  dateMode: DateMode;
-  agentEmail: string;
-  ticketId: string;
-  pickOrder: number;
-  analyzed: boolean;
-  analysisStatus: string | null;
-  ticket: {
-    ticketId: string;
-    subject: string | null;
-    customerEmail: string | null;
-    status: string | null;
-    priority: string | null;
-    groupName: string | null;
-    day: string | null;
-    responseTimeSeconds: number | null;
-    hasStoredAnalysis: boolean;
-  } | null;
-};
-
-function DailyAuditSection({ date, dateMode }: { date: string; dateMode: DateMode }) {
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-
-  // Always poll status — keeps UI in sync even if audit was triggered elsewhere
-  const { data: statusData } = useQuery({
-    queryKey: ['daily-picks-status', date, dateMode],
-    queryFn: () => dailyPicksApi.getStatus(date, dateMode),
-    enabled: !!date,
-    refetchInterval: (query) => {
-      const s = (query.state.data as any)?.data;
-      return s?.inProgress ? 2000 : 15000; // 2s while running, 15s idle
-    },
-  });
-
-  const inProgress = statusData?.data?.inProgress || false;
-
-  // Picks data — refetch frequently while audit is running
-  const { data: picksData, isLoading: picksLoading } = useQuery({
-    queryKey: ['daily-picks', date, dateMode],
-    queryFn: () => dailyPicksApi.getPicks(date, dateMode),
-    enabled: !!date,
-    staleTime: inProgress ? 0 : 1000 * 30,
-    refetchInterval: inProgress ? 3000 : false,
-  });
-
-  const runAudit = useMutation({
-    mutationFn: () => dailyPicksApi.runAudit(date, dateMode),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode] });
-      queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] });
-    },
-  });
-
-  const resetPicks = useMutation({
-    mutationFn: () => api.delete(`/daily-picks/reset?date=${date}&dateMode=${dateMode}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode] });
-      queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode] });
-    },
-  });
-
-  const status = statusData?.data;
-  const picks = picksData?.data;
-  const byAgent = picks?.byAgent || {};
-  const agentEmails = Object.keys(byAgent).sort((left, right) => {
-    const leftData = byAgent[left];
-    const rightData = byAgent[right];
-    if (rightData.analyzed !== leftData.analyzed) return rightData.analyzed - leftData.analyzed;
-    if (rightData.total !== leftData.total) return rightData.total - leftData.total;
-    return left.localeCompare(right);
-  });
-  const totalPicks = picks?.totalPicks || 0;
-  const analyzed = status?.analyzed ?? picks?.picks?.filter((pick: DailyPickRow) => pick.analyzed).length ?? 0;
-  const errors = status?.errors || 0;
-  const progressPct = totalPicks > 0 ? Math.round((analyzed / totalPicks) * 100) : 0;
-
-  if (picksLoading) return null;
-
-  return (
-    <div className="card mb-6">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-lg font-semibold">Daily Audit</h2>
-          <p className="text-slate-500 text-sm">
-            {totalPicks > 0
-              ? `${totalPicks} tickets sampled across ${agentEmails.length} agents (${dateMode === 'activity' ? 'activity date' : 'created date'})`
-              : 'Generate random ticket picks for QA review'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {totalPicks > 0 && !inProgress && (
-            <button
-              onClick={() => { if (confirm('Reset picks and regenerate with current settings?')) resetPicks.mutate(); }}
-              disabled={resetPicks.isPending}
-              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors"
-            >
-              <RefreshCw size={14} /> Reset
-            </button>
-          )}
-          <button
-            onClick={() => runAudit.mutate()}
-            disabled={runAudit.isPending || inProgress}
-            className="btn-primary flex items-center gap-2 text-sm !px-4 !py-2.5"
-          >
-            {runAudit.isPending || inProgress ? (
-              <><Loader2 size={16} className="animate-spin" /> Running...</>
-            ) : (
-              <><Play size={16} /> {totalPicks > 0 ? 'Re-run Audit' : 'Run Daily Audit'}</>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Progress Bar */}
-      {totalPicks > 0 && (
-        <div className="mb-4">
-          <div className="flex justify-between text-sm text-slate-500 mb-1">
-            <span>{analyzed} / {totalPicks} analyzed</span>
-            <span>{progressPct}%{errors > 0 ? ` • ${errors} failed` : ''}</span>
-          </div>
-          <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ease-md3 ${
-                progressPct === 100 ? 'bg-uh-success' : 'bg-uh-purple'
-              }`}
-              style={{ width: `${progressPct}%` }}
-            />
-          </div>
-          {progressPct === 100 && (
-            <div className="mt-2 flex items-center gap-1.5 text-uh-success text-[10px] font-bold uppercase tracking-wider animate-in fade-in slide-in-from-top-1 duration-500">
-              <CheckCircle2 size={12} />
-              Daily Audit Complete
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Per-agent breakdown */}
-      {agentEmails.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-          {agentEmails.map(email => {
-            const agent = byAgent[email];
-            const name = email.split('@')[0].replace(/[._]/g, ' ').replace(/_ext$/, '');
-            const pct = agent.total > 0 ? Math.round((agent.analyzed / agent.total) * 100) : 0;
-            return (
-              <button
-                key={email}
-                onClick={() => setSelectedAgent(email)}
-                className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 hover:bg-slate-100 hover:shadow-elevation-1 transition-all duration-md3 ease-md3 text-left"
-              >
-                <div
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
-                  style={{ background: getAvatarColor(name).bg, color: getAvatarColor(name).fg }}
-                >
-                  {getAvatarInitial(name)}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium truncate">{name}</p>
-                  <p className="text-[10px] text-slate-400 flex items-center gap-1">
-                    <span>{agent.analyzed}/{agent.total} done</span>
-                    <span>•</span>
-                    <span>{pct}%</span>
-                    {agent.errors > 0 && (
-                      <>
-                        <span>•</span>
-                        <span className="text-uh-error">{agent.errors} failed</span>
-                      </>
-                    )}
-                  </p>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Modal for selected agent's tickets */}
-      {selectedAgent && (
-        <AnalyzedTicketsModal
-          email={selectedAgent}
-          date={date}
-          picks={picks?.picks || []}
-          onClose={() => setSelectedAgent(null)}
-          onTicketClick={(ticketId) => {
-            navigate(`/ticket/${ticketId}?refresh=true`);
-            setSelectedAgent(null);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-// Modal showing analyzed tickets for a specific agent
-function AnalyzedTicketsModal({
-  email,
-  date,
-  picks,
-  onClose,
-  onTicketClick,
-}: {
-  email: string;
-  date: string;
-  picks: any[];
-  onClose: () => void;
-  onTicketClick: (ticketId: string) => void;
-}) {
-  const agentPicks = picks
-    .filter((pick) => pick.agentEmail === email)
-    .sort((left, right) => left.pickOrder - right.pickOrder);
-  const name = email.split('@')[0].replace(/[._]/g, ' ').replace(/_ext$/, '');
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div
-        className="bg-white rounded-2xl shadow-elevation-3 max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-slate-200">
-          <div>
-            <h2 className="text-xl font-semibold">{name}'s Analyzed Tickets</h2>
-            <p className="text-sm text-slate-500 mt-1">{date} • {agentPicks.length} sampled tickets</p>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
-          >
-            <X size={20} />
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="overflow-auto flex-1">
-          {agentPicks.length === 0 ? (
-            <div className="p-6 text-center text-slate-500">No tickets found</div>
-          ) : (
-            <div className="divide-y divide-slate-200">
-              {agentPicks.map((pick) => (
-                <button
-                  key={pick.ticketId}
-                  onClick={() => onTicketClick(pick.ticketId)}
-                  className="w-full px-6 py-4 hover:bg-slate-50 transition-colors text-left flex items-center justify-between group"
-                >
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-sm">Ticket {pick.ticketId}</span>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
-                        #{pick.pickOrder}
-                      </span>
-                      {pick.pickReason && (
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
-                          pick.pickReason === 'High Risk'
-                            ? 'bg-uh-error/10 text-uh-error border border-uh-error/20'
-                            : 'bg-uh-cyan/10 text-uh-cyan border border-uh-cyan/20'
-                        }`}>
-                          {pick.pickReason} {pick.riskScore > 0 ? `(${pick.riskScore})` : ''}
-                        </span>
-                      )}
-                      {pick.ticket?.status && (
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${
-                          pick.ticket.status === 'RESOLVED'
-                            ? 'bg-uh-success/20 text-uh-success'
-                            : 'bg-uh-warning/20 text-uh-warning'
-                        }`}>
-                          {pick.ticket.status}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-slate-700 truncate">
-                      {pick.ticket?.subject || 'No subject'}
-                    </p>
-                    <div className="flex items-center gap-2">
-                      {pick.analyzed ? (
-                        <>
-                          {pick.analysisStatus === 'success' ? (
-                            <CheckCircle2 size={14} className="text-uh-success" />
-                          ) : (
-                            <AlertCircle size={14} className="text-uh-error" />
-                          )}
-                          <span className="text-xs text-slate-500">
-                            {pick.analysisStatus === 'success'
-                              ? (pick.ticket?.hasStoredAnalysis ? 'Analyzed and cached' : 'Analyzed')
-                              : 'Analysis failed'}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-xs text-slate-400">Pending</span>
-                      )}
-                      {pick.ticket?.groupName && (
-                        <>
-                          <span className="text-slate-300">•</span>
-                          <span className="text-xs text-slate-500 truncate">{pick.ticket.groupName}</span>
-                        </>
-                      )}
-                      {pick.ticket?.customerEmail && (
-                        <>
-                          <span className="text-slate-300">•</span>
-                          <span className="text-xs text-slate-400 truncate">{pick.ticket.customerEmail}</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <ChevronRight size={18} className="text-slate-400 group-hover:text-uh-purple transition-colors" />
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}

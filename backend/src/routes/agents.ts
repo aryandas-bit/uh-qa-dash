@@ -6,6 +6,7 @@ import {
   getDefaulters,
   getAvailableDates,
   getAgentQATrend,
+  getAgentsQATrends,
   getDailyPickTicketSummaries,
   getQAReviewsBulk,
   getQAScoresBulk,
@@ -48,7 +49,7 @@ async function handleAuditNowRequest(
 ) {
   const decodedEmail = decodeURIComponent(agentEmail);
   const picks = await createAgentRandomSample(date, decodedEmail, dateMode, Math.max(1, Number(count) || 10));
-  const status = await runDailyAudit(date, dateMode);
+  const status = await runDailyAudit(date, dateMode, decodedEmail);
 
   return {
     agentEmail: decodedEmail,
@@ -76,6 +77,28 @@ router.get('/dates', async (req, res) => {
   } catch (error) {
     console.error('Error fetching dates:', error);
     res.status(500).json({ error: 'Failed to fetch available dates' });
+  }
+});
+
+// GET /api/agents/qa-trends?emails=a,b,c&limit=7 - Bulk get agent QA trends
+router.get('/qa-trends', async (req, res) => {
+  try {
+    const rawEmails = String(req.query.emails || '');
+    const limit = parseInt(req.query.limit as string, 10) || 14;
+    const emails = rawEmails
+      .split(',')
+      .map((value) => decodeURIComponent(value.trim()))
+      .filter(Boolean);
+
+    if (emails.length === 0) {
+      return res.status(400).json({ error: 'emails parameter is required' });
+    }
+
+    const trends = await getAgentsQATrends(emails, limit);
+    res.json({ limit, trends });
+  } catch (error) {
+    console.error('Error fetching bulk agent QA trends:', error);
+    res.status(500).json({ error: 'Failed to fetch bulk agent QA trends' });
   }
 });
 
@@ -225,12 +248,10 @@ router.get('/:email/report-card', async (req, res) => {
 
     const [ticketResult, pickResult] = await Promise.all([
       getAgentTickets(decodedEmail, date, 500, 0, dateMode),
-      getDailyPicks(date, 10, dateMode),
+      getDailyPicks(date, 10, dateMode, { agentEmail: decodedEmail, autoGenerate: false }),
     ]);
 
-    const samplePicks = pickResult.picks
-      .filter((pick) => pick.agentEmail === decodedEmail)
-      .sort((left, right) => left.pickOrder - right.pickOrder);
+    const samplePicks = pickResult.picks.sort((left, right) => left.pickOrder - right.pickOrder);
 
     if (samplePicks.length === 0) {
       return res.status(404).json({ error: 'No sampled tickets found for this agent and date' });

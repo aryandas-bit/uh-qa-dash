@@ -152,6 +152,7 @@ function parseMessages(messagesJson: string): ParsedMessage[] {
 export default function TicketPage() {
   const { id } = useParams<{ id: string }>();
   const [analysis, setAnalysis] = useState<QAAnalysis | null>(null);
+  const [analysisMetadata, setAnalysisMetadata] = useState<{ isFallback?: boolean; triage?: any; analysisPath?: string } | null>(null);
   const [customerHistory, setCustomerHistory] = useState<CustomerTicketHistory[]>([]);
   const [auditMemories, setAuditMemories] = useState<AuditMemory[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -229,6 +230,11 @@ export default function TicketPage() {
       const response = await analysisApi.getTicketAnalysis(id, false, true);
       if (response.data.analysis) {
         setAnalysis(response.data.analysis);
+        setAnalysisMetadata({
+          isFallback: response.data.analysis.isFallback || response.data.analysisInfo?.isFallback,
+          triage: response.data.analysis.triage || response.data.analysisInfo?.triage,
+          analysisPath: response.data.analysis.analysisPath || response.data.analysisInfo?.path,
+        });
         setCustomerHistory(response.data.customerHistory || []);
         setAuditMemories(response.data.auditMemories || []);
       }
@@ -244,6 +250,11 @@ export default function TicketPage() {
     try {
       const response = await analysisApi.getTicketAnalysis(id, forceRefresh);
       setAnalysis(response.data.analysis);
+      setAnalysisMetadata({
+        isFallback: response.data.analysisInfo?.isFallback,
+        triage: response.data.analysisInfo?.triage,
+        analysisPath: response.data.analysisInfo?.path,
+      });
       setCustomerHistory(response.data.customerHistory || []);
       setAuditMemories(response.data.auditMemories || []);
       setReview(response.data.review || null);
@@ -804,6 +815,68 @@ export default function TicketPage() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Triage Digest — shown when Groq triage data is available */}
+      {analysisMetadata?.triage && (
+        <details className="card mb-6 group opacity-70 hover:opacity-100 transition-opacity">
+          <summary className="list-none cursor-pointer flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-slate-500">Triage Digest</h3>
+              {analysisMetadata.isFallback && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-uh-warning/15 text-uh-warning border border-uh-warning/30">
+                  Triage-only — Gemini unavailable
+                </span>
+              )}
+              <span className="text-xs text-slate-400">Groq pre-analysis · not used for scoring</span>
+            </div>
+            <span className="text-xs text-slate-400 group-open:rotate-180 transition-transform">▾</span>
+          </summary>
+          <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+            {[
+              ['Category', analysisMetadata.triage.issueCategory],
+              ['Priority', analysisMetadata.triage.priority],
+              ['Sentiment', analysisMetadata.triage.customerSentiment],
+              ['Technical issue', analysisMetadata.triage.hasTechnicalIssue ? 'Yes' : 'No'],
+              ['Repeat likely', analysisMetadata.triage.repeatIssueLikely ? 'Yes' : 'No'],
+              ['Resolution', analysisMetadata.triage.resolutionState],
+            ].map(([label, value]) => (
+              <div key={label} className="bg-slate-50 rounded-lg p-2">
+                <p className="text-slate-400 uppercase tracking-wider text-[10px] mb-0.5">{label}</p>
+                <p className="font-medium text-slate-700 capitalize">{value}</p>
+              </div>
+            ))}
+          </div>
+          {(analysisMetadata.triage.keyFacts?.length > 0 || analysisMetadata.triage.riskFlags?.length > 0) && (
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+              {analysisMetadata.triage.keyFacts?.length > 0 && (
+                <div>
+                  <p className="text-slate-400 uppercase tracking-wider text-[10px] mb-1">Key Facts</p>
+                  <ul className="space-y-1">
+                    {analysisMetadata.triage.keyFacts.map((fact: string, i: number) => (
+                      <li key={i} className="text-slate-600">· {fact}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {analysisMetadata.triage.riskFlags?.length > 0 && (
+                <div>
+                  <p className="text-slate-400 uppercase tracking-wider text-[10px] mb-1">Risk Flags</p>
+                  <ul className="space-y-1">
+                    {analysisMetadata.triage.riskFlags.map((flag: string, i: number) => (
+                      <li key={i} className="text-uh-warning">⚑ {flag}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+          {analysisMetadata.triage.shortDigest && (
+            <p className="mt-3 text-xs text-slate-500 italic border-t border-slate-100 pt-3">
+              {analysisMetadata.triage.shortDigest}
+            </p>
+          )}
+        </details>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

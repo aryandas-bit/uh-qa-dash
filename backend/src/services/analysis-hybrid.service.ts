@@ -1,21 +1,26 @@
-import { analyzeQuick, type QuickAnalysis } from './groq.service.js';
+import { analyzeQuick, type QuickAnalysis, type TriageDigest, convertDigestToProvisionalAnalysis } from './groq.service.js';
 import { analyzeTicket, type QAAnalysis, type CustomerTicketHistory } from './gemini.service.js';
 import type { AuditMemoryRecord } from './database.service.js';
 
 export interface HybridAnalysis {
+  triage?: TriageDigest;
   groqQuick?: QuickAnalysis | { error: string };
   geminiDeep?: QAAnalysis | { error: string };
   merged: QAAnalysis;
-  analysisPath: 'groq+gemini' | 'groq-only' | 'gemini-only' | 'error';
+  analysisPath: 'triage+judge' | 'judge-only' | 'triage-only' | 'error';
+  isFallback: boolean;
+  triageMs?: number;
+  judgeMs?: number;
   totalTime: number;
 }
 
 /**
- * Run Groq quick analysis + Gemini deep analysis in parallel.
- * - Groq fast path returns sentiment + priority + error flag + category instantly
- * - Gemini deep path runs in parallel for full QA analysis
- * - Results merge into final analysis_json
- * - If either model fails, fall back gracefully
+ * Run Groq triage → Gemini judge sequentially.
+ * - Groq triage (fast): extracts structured facts, sentiment, priority
+ * - Gemini judge (deep): full QA analysis with triage digest as context
+ * - If Gemini succeeds: use Gemini result (with triage attached)
+ * - If Gemini fails but Groq succeeds: convert triage to provisional analysis (labeled as fallback)
+ * - If both fail: return minimal safe response (labeled as fallback)
  */
 export async function analyzeHybrid(
   ticketId: string,
@@ -29,97 +34,69 @@ export async function analyzeHybrid(
   auditMemories?: AuditMemoryRecord[]
 ): Promise<HybridAnalysis> {
   const startTime = Date.now();
+  let triageMs = 0;
+  let judgeMs = 0;
+  let triage: TriageDigest | undefined;
 
-  // Run both models in parallel
-  const [groqResult, geminiResult] = await Promise.allSettled([
-    analyzeQuick(ticketId, firstCustomerMessage, lastAgentMessage, totalTurns),
-    analyzeTicket(ticketId, messagesJson, category, tags, customerHistory, auditMemories),
+  // Stage 1: Groq triage (best-effort, absorb errors)
+  try {
+    const triageStart = Date.now();
+    triage = await analyzeQuick(ticketId, firstCustomerMessage, lastAgentMessage, totalTurns);
+    triageMs = Date.now() - triageStart;
+  } catch (error) {
+    console.warn(`[Hybrid] Triage failed for ticket=${ticketId}:`, (error as Error).message);
+  }
+
+  // Stage 2: Gemini judge (now with triage context if available)
+  const geminiStart = Date.now();
+  const geminiResult = await Promise.allSettled([
+    analyzeTicket(ticketId, messagesJson, category, tags, customerHistory, auditMemories, triage),
   ]);
+  judgeMs = Date.now() - geminiStart;
 
-  const groqSuccess = groqResult.status === 'fulfilled';
-  const geminiSuccess = geminiResult.status === 'fulfilled';
+  const geminiSuccess = geminiResult[0].status === 'fulfilled';
 
   console.log(
-    `[Hybrid] ticket=${ticketId} groq=${groqSuccess ? 'ok' : 'fail'} gemini=${geminiSuccess ? 'ok' : 'fail'}`
+    `[Hybrid] ticket=${ticketId} triage=${triage ? 'ok' : 'fail'} judge=${geminiSuccess ? 'ok' : 'fail'} totalMs=${Date.now() - startTime}`
   );
 
-  // Determine analysis path
+  // Merge results
   let analysisPath: HybridAnalysis['analysisPath'] = 'error';
   let merged: QAAnalysis;
+  let isFallback = false;
 
-  if (geminiSuccess) {
-    // Gemini always wins (it's the truth)
-    merged = geminiResult.value;
-    if (groqSuccess) {
-      analysisPath = 'groq+gemini';
-    } else {
-      analysisPath = 'gemini-only';
-    }
-  } else if (groqSuccess) {
-    // Fallback: convert Groq quick to full analysis
-    merged = convertQuickToFull(groqResult.value, ticketId);
-    analysisPath = 'groq-only';
+  const geminiSettled = geminiResult[0];
+
+  if (geminiSuccess && geminiSettled.status === 'fulfilled') {
+    // Gemini succeeds: use it verbatim
+    merged = geminiSettled.value;
+    analysisPath = triage ? 'triage+judge' : 'judge-only';
+  } else if (triage) {
+    // Gemini fails but triage exists: convert triage to provisional analysis
+    merged = convertDigestToProvisionalAnalysis(triage);
+    analysisPath = 'triage-only';
+    isFallback = true;
   } else {
-    // Both failed - return minimal safe response
+    // Both failed: return safe default
     merged = createEmptyAnalysis(ticketId);
     analysisPath = 'error';
+    isFallback = true;
   }
 
   return {
-    groqQuick: groqSuccess
-      ? groqResult.value
-      : { ...getDefaultQuickAnalysis(), error: String(groqResult.reason) },
-    geminiDeep: geminiSuccess
-      ? geminiResult.value
-      : { error: String(geminiResult.reason) },
+    triage,
+    geminiDeep: geminiSettled.status === 'fulfilled'
+      ? geminiSettled.value
+      : { error: String((geminiSettled as PromiseRejectedResult).reason) },
     merged,
     analysisPath,
+    isFallback,
+    triageMs,
+    judgeMs,
     totalTime: Date.now() - startTime,
   };
 }
 
-/**
- * Convert Groq quick analysis to a minimal full QA analysis
- * Used as fallback when Gemini fails
- */
-function convertQuickToFull(quick: QuickAnalysis, ticketId: string): QAAnalysis {
-  const baseScore = quick.hasError ? 50 : 85;
-  const adjustedScore = quick.priority === 'urgent' ? Math.max(0, baseScore - 15) : baseScore;
-
-  return {
-    qaScore: adjustedScore,
-    deductions: quick.hasError
-      ? [{ category: 'process', points: -50, reason: 'Technical error reported' }]
-      : [],
-    sopCompliance: {
-      score: 0,
-      missedSteps: [],
-      correctlyFollowed: [],
-      matchedSOP: null,
-    },
-    sentiment: {
-      customer: quick.sentiment,
-      progression: 'unknown',
-      agentTone: 'unknown',
-    },
-    customerContext: {
-      isRepeatIssue: false,
-      repeatIssueDetails: null,
-      totalPreviousTickets: 0,
-      previousAgents: [],
-      customerExperience: 'neutral',
-      recommendation: null,
-    },
-    resolution: {
-      wasAbandoned: false,
-      wasAutoResolved: false,
-      customerIssueResolved: quick.sentiment === 'positive',
-      abandonmentDetails: null,
-    },
-    suggestions: quick.hasError ? ['Investigate reported error'] : [],
-    summary: `Quick triage: ${quick.sentiment} customer, ${quick.priority} priority, category=${quick.issueCategory}`,
-  };
-}
 
 /**
  * Create a minimal safe analysis when both models fail
@@ -158,12 +135,3 @@ function createEmptyAnalysis(ticketId: string): QAAnalysis {
   };
 }
 
-function getDefaultQuickAnalysis(): QuickAnalysis {
-  return {
-    sentiment: 'neutral',
-    priority: 'standard',
-    hasError: false,
-    issueCategory: 'other',
-    analyzeTime: 0,
-  };
-}
