@@ -361,7 +361,8 @@ export async function getAuditStatus(
 export async function runDailyAudit(
   date: string,
   dateMode: DateMode = 'activity',
-  agentEmail?: string
+  agentEmail?: string,
+  forceReanalysis = false
 ): Promise<AuditProgress> {
   const normalizedAgentEmail = agentEmail ? decodeURIComponent(agentEmail) : undefined;
   const auditKey = getAuditKey(date, dateMode, normalizedAgentEmail);
@@ -374,15 +375,17 @@ export async function runDailyAudit(
     agentEmail: normalizedAgentEmail,
     autoGenerate: false,
   });
-  const unanalyzed = picks.filter(p => !p.analyzed);
 
-  if (unanalyzed.length === 0) {
+  // When forceReanalysis=true (explicit re-sample), audit ALL picks regardless of stored state
+  const toAudit = forceReanalysis ? picks : picks.filter(p => !p.analyzed);
+
+  if (toAudit.length === 0) {
     return getAuditStatus(date, dateMode, normalizedAgentEmail);
   }
 
   activeAudits.add(auditKey);
   try {
-    await processAuditBatch(date, dateMode, unanalyzed);
+    await processAuditBatch(date, dateMode, toAudit, forceReanalysis);
   } catch (err) {
     console.error(`[DailyAudit] Batch failed for ${auditKey}:`, err);
   } finally {
@@ -395,7 +398,7 @@ export async function runDailyAudit(
 const GEMINI_CONCURRENCY = Math.max(1, Number(process.env.GEMINI_CONCURRENCY || '3'));
 const AUDIT_CHUNK_DELAY_MS = Math.max(250, Number(process.env.DAILY_AUDIT_CHUNK_DELAY_MS || '500'));
 
-async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyPick[]): Promise<void> {
+async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyPick[], forceReanalysis = false): Promise<void> {
   // Promise-based cache: all concurrent calls for the same email await the same fetch
   const historyCache = new Map<string, Promise<any[]>>();
   const memoryCache = new Map<string, Promise<AuditMemoryRecord[]>>();
@@ -431,14 +434,18 @@ async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyP
     return [category, subject, tagPart].filter(Boolean).join(' | ');
   }
 
-  // Pre-filter: skip already-stored picks
+  // Pre-filter: skip already-stored picks (bypass when forceReanalysis=true)
   const unanalyzedPicks: DailyPick[] = [];
   for (const pick of picks) {
-    const stored = await getStoredTicketAnalysis(pick.ticketId);
-    if (stored) {
-      await markPickAnalyzed(date, dateMode, pick.ticketId, 'success');
-    } else {
+    if (forceReanalysis) {
       unanalyzedPicks.push(pick);
+    } else {
+      const stored = await getStoredTicketAnalysis(pick.ticketId);
+      if (stored) {
+        await markPickAnalyzed(date, dateMode, pick.ticketId, 'success');
+      } else {
+        unanalyzedPicks.push(pick);
+      }
     }
   }
 

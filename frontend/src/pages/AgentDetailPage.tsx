@@ -214,7 +214,8 @@ export default function AgentDetailPage() {
     queryFn: () => analysisApi.getCachedScores(scoreQueryIds),
     enabled: scoreQueryIds.length > 0,
     staleTime: 1000 * 10,
-    refetchInterval: auditStatusData?.inProgress ? 3000 : false,
+    // Poll while audit is running or picks exist (catches delayed score saves after mutation)
+    refetchInterval: (auditStatusData?.inProgress || sampleTicketIdsForQuery.length > 0) ? 4000 : false,
   });
   const cachedScores: Record<string, ScoreEntry> = scoresData?.data?.scores || {};
   const fallbackIds: Set<string> = new Set(scoresData?.data?.fallbackIds || []);
