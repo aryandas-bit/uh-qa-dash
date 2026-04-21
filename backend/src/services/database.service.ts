@@ -260,7 +260,11 @@ export async function syncDailyPickAnalysisFlags(date: string, dateMode: DateMod
               analysis_status = 'success'
           WHERE pick_date = ?
             AND date_mode = ?
-            AND ticket_id IN (SELECT ticket_id FROM ticket_analyses)`,
+            AND ticket_id IN (
+              SELECT ticket_id
+              FROM ticket_analyses
+              WHERE COALESCE(json_extract(analysis_json, '$.isFallback'), 0) = 0
+            )`,
     args: [date, dateMode],
   });
 }
@@ -299,7 +303,10 @@ export async function getStoredTicketAnalysisIds(ticketIds: string[]): Promise<S
 
   const placeholders = ticketIds.map(() => '?').join(',');
   const result = await reviewsDb.execute({
-    sql: `SELECT ticket_id as ticketId FROM ticket_analyses WHERE ticket_id IN (${placeholders})`,
+    sql: `SELECT ticket_id as ticketId
+          FROM ticket_analyses
+          WHERE ticket_id IN (${placeholders})
+            AND COALESCE(json_extract(analysis_json, '$.isFallback'), 0) = 0`,
     args: ticketIds,
   });
 
@@ -418,7 +425,10 @@ export async function getDailyPickTicketSummaries(ticketIds: string[]): Promise<
       args: ticketIds,
     }),
     reviewsDb.execute({
-      sql: `SELECT ticket_id as ticketId FROM ticket_analyses WHERE ticket_id IN (${placeholders})`,
+      sql: `SELECT ticket_id as ticketId
+            FROM ticket_analyses
+            WHERE ticket_id IN (${placeholders})
+              AND COALESCE(json_extract(analysis_json, '$.isFallback'), 0) = 0`,
       args: ticketIds,
     }),
   ]);

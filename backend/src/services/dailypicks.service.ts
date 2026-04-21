@@ -446,7 +446,8 @@ async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyP
       unanalyzedPicks.push(pick);
     } else {
       const stored = await getStoredTicketAnalysis(pick.ticketId);
-      if (stored) {
+      const hasNonFallbackAnalysis = Boolean(stored && !(stored as any).isFallback);
+      if (hasNonFallbackAnalysis) {
         await markPickAnalyzed(date, dateMode, pick.ticketId, 'success');
       } else {
         unanalyzedPicks.push(pick);
