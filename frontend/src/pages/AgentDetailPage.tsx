@@ -311,6 +311,16 @@ export default function AgentDetailPage() {
   const sampleApprovedCount = sampleRows.filter((row) => row.review?.status === 'approved').length;
   const sampleFlaggedCount = sampleRows.filter((row) => row.review?.status === 'flagged').length;
   const reportReady = sampleAuditedCount > 0;
+  const refreshAuditQueries = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode, decodedEmail] }),
+      queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode, decodedEmail] }),
+      queryClient.invalidateQueries({ queryKey: ['audit-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['cached-scores'] }),
+      queryClient.invalidateQueries({ queryKey: ['reviews'] }),
+      queryClient.invalidateQueries({ queryKey: ['agent-insights'] }),
+    ]);
+  };
 
   const auditNowMutation = useMutation({
     mutationFn: async () => {
@@ -323,14 +333,9 @@ export default function AgentDetailPage() {
     onSuccess: async () => {
       setReportCard(null);
       setInsightsEnabled(false);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode, decodedEmail] }),
-        queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode, decodedEmail] }),
-        queryClient.invalidateQueries({ queryKey: ['audit-summary'] }),
-        queryClient.invalidateQueries({ queryKey: ['cached-scores'] }),
-        queryClient.invalidateQueries({ queryKey: ['reviews'] }),
-        queryClient.invalidateQueries({ queryKey: ['agent-insights'] }),
-      ]);
+    },
+    onSettled: async () => {
+      await refreshAuditQueries();
     },
   });
   const runAuditsDisabled = auditNowMutation.isPending || !date || !decodedEmail || !geminiAvailable;
