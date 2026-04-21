@@ -632,12 +632,16 @@ router.get('/agent/:email/summary', async (req, res) => {
 // GET /api/analysis/cached-scores - Get persisted QA scores for multiple tickets
 // Reads from the qa_scores DB table (durable) and falls back to in-memory cache
 // for tickets analyzed in the current session but not yet flushed.
-router.get('/cached-scores', async (req, res) => {
+async function handleCachedScoresRequest(ticketIdsInput: unknown, res: any) {
   try {
-    const ticketIdsParam = req.query.ticketIds as string;
-    if (!ticketIdsParam) return res.json({ scores: {}, fallbackIds: [] });
+    const ticketIdsParam = Array.isArray(ticketIdsInput)
+      ? ticketIdsInput.map((id) => String(id || '').trim()).filter(Boolean)
+      : typeof ticketIdsInput === 'string'
+      ? ticketIdsInput.split(',').map((id: string) => id.trim()).filter(Boolean)
+      : [];
+    if (ticketIdsParam.length === 0) return res.json({ scores: {}, fallbackIds: [] });
 
-    const ticketIds = ticketIdsParam.split(',').map((id: string) => id.trim()).filter(Boolean);
+    const ticketIds = ticketIdsParam;
 
     // Primary: read from the persistent DB table
     const dbScores = await getQAScoresBulk(ticketIds);
@@ -654,6 +658,9 @@ router.get('/cached-scores', async (req, res) => {
             summary: cached.summary || null,
             deductions: cached.deductions || [],
           };
+          if (cached?.isFallback) {
+            fallbackIds.push(id);
+          }
         } else if (cached?.isFallback) {
           // Analyzed but Gemini failed — triage-only provisional score
           fallbackIds.push(id);
@@ -661,6 +668,14 @@ router.get('/cached-scores', async (req, res) => {
           // Check DB for cross-session fallback state
           const stored = await getStoredTicketAnalysis(id);
           if (stored && (stored as any).isFallback) {
+            const fallbackScore = Number((stored as any).qaScore);
+            if (Number.isFinite(fallbackScore)) {
+              dbScores[id] = {
+                qaScore: fallbackScore,
+                summary: ((stored as any).summary as string) || null,
+                deductions: Array.isArray((stored as any).deductions) ? (stored as any).deductions : [],
+              };
+            }
             fallbackIds.push(id);
           }
         }
@@ -672,6 +687,15 @@ router.get('/cached-scores', async (req, res) => {
     console.error('Error fetching cached scores:', error);
     return res.status(500).json({ error: 'Failed to fetch scores' });
   }
+}
+
+router.get('/cached-scores', async (req, res) => {
+  return handleCachedScoresRequest(req.query.ticketIds as string | undefined, res);
+});
+
+// POST /api/analysis/cached-scores - Body-based variant for large ticketId lists
+router.post('/cached-scores', async (req, res) => {
+  return handleCachedScoresRequest(req.body?.ticketIds, res);
 });
 
 // GET /api/analysis/reviews - Get reviews for specific ticket IDs (bulk lookup) or all with ticket info

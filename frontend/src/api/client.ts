@@ -78,7 +78,7 @@ export const analysisApi = {
   getReviews: (ticketIds?: string[]) =>
     api.get(`/analysis/reviews${ticketIds?.length ? `?ticketIds=${ticketIds.join(',')}` : ''}`),
   getCachedScores: (ticketIds: string[]) =>
-    api.get(`/analysis/cached-scores${ticketIds.length ? `?ticketIds=${ticketIds.join(',')}` : ''}`),
+    api.post('/analysis/cached-scores', { ticketIds }),
   getAgentInsights: (email: string, date: string, dateMode: DateMode = 'activity', sampleTicketIds?: string[]) =>
     api.get(`/analysis/agent/${encodeURIComponent(email)}/insights?date=${date}&dateMode=${dateMode}${sampleTicketIds?.length ? `&ticketIds=${sampleTicketIds.join(',')}` : ''}`),
 };

@@ -805,9 +805,9 @@ export default function AgentDetailPage() {
                           Review pending
                         </span>
                       )}
-                      {!row.score && fallbackIds.has(String(row.pick.ticketId)) && (
+                      {fallbackIds.has(String(row.pick.ticketId)) && (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-uh-warning/15 text-uh-warning border border-uh-warning/30">
-                          Triage-only — Gemini unavailable
+                          Provisional — Gemini fallback
                         </span>
                       )}
                       {!row.score && !fallbackIds.has(String(row.pick.ticketId)) && (
