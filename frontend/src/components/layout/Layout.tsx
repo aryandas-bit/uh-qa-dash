@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, AlertTriangle, ClipboardList, Inbox, PanelLeftClose, PanelLeft } from 'lucide-react';
+import { LayoutDashboard, AlertTriangle, ClipboardList, Inbox, PanelLeftClose, PanelLeft, TrendingUp } from 'lucide-react';
 import TicketSearchBar from '../common/TicketSearchBar';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/tickets', label: 'Tickets', icon: Inbox },
+  { path: '/trends', label: 'Trends', icon: TrendingUp },
   { path: '/defaulters', label: 'Defaulters', icon: AlertTriangle },
   { path: '/qc-reviews', label: 'QC Reviews', icon: ClipboardList },
 ];

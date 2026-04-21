@@ -134,46 +134,6 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
-          {/* Summary Stats Row — 4 cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div className="card flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-uh-purple/20">
-                <Ticket size={20} className="text-uh-purple" />
-              </div>
-              <div>
-                <p className="text-slate-500 text-xs">Total Tickets</p>
-                <p className="text-2xl font-bold">{summary.totalTickets || 0}</p>
-              </div>
-            </div>
-            <div className="card flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-uh-cyan/20">
-                <Users size={20} className="text-uh-cyan" />
-              </div>
-              <div>
-                <p className="text-slate-500 text-xs">Active Agents</p>
-                <p className="text-2xl font-bold">{summary.activeAgents || 0}</p>
-              </div>
-            </div>
-            <div className="card flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-uh-success/20">
-                <CheckCircle size={20} className="text-uh-success" />
-              </div>
-              <div>
-                <p className="text-slate-500 text-xs">Resolved</p>
-                <p className="text-2xl font-bold">{summary.resolvedCount || 0}</p>
-              </div>
-            </div>
-            <div className="card flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-uh-warning/20">
-                <Star size={20} className="text-uh-warning" />
-              </div>
-              <div>
-                <p className="text-slate-500 text-xs">Avg CSAT</p>
-                <p className="text-2xl font-bold">{summary.avgCsat || '-'}</p>
-              </div>
-            </div>
-          </div>
-
           {/* Audit QA Scores panel */}
           {auditAgents.length > 0 && (
             <div className="card mb-6 border border-uh-purple/10">
@@ -216,6 +176,46 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
+
+          {/* Summary Stats Row — 4 cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="card flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-uh-purple/20">
+                <Ticket size={20} className="text-uh-purple" />
+              </div>
+              <div>
+                <p className="text-slate-500 text-xs">Total Tickets</p>
+                <p className="text-2xl font-bold">{summary.totalTickets || 0}</p>
+              </div>
+            </div>
+            <div className="card flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-uh-cyan/20">
+                <Users size={20} className="text-uh-cyan" />
+              </div>
+              <div>
+                <p className="text-slate-500 text-xs">Active Agents</p>
+                <p className="text-2xl font-bold">{summary.activeAgents || 0}</p>
+              </div>
+            </div>
+            <div className="card flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-uh-success/20">
+                <CheckCircle size={20} className="text-uh-success" />
+              </div>
+              <div>
+                <p className="text-slate-500 text-xs">Resolved</p>
+                <p className="text-2xl font-bold">{summary.resolvedCount || 0}</p>
+              </div>
+            </div>
+            <div className="card flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-uh-warning/20">
+                <Star size={20} className="text-uh-warning" />
+              </div>
+              <div>
+                <p className="text-slate-500 text-xs">Avg CSAT</p>
+                <p className="text-2xl font-bold">{summary.avgCsat || '-'}</p>
+              </div>
+            </div>
+          </div>
 
           {/* Three Column Layout */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">

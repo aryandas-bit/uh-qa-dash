@@ -138,6 +138,7 @@ export default function AgentDetailPage() {
   const queryClient = useQueryClient();
   const [reportCard, setReportCard] = useState<ReportCard | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [insightsEnabled, setInsightsEnabled] = useState(false);
   const { selectedDate, setSelectedDate, dateMode: storeDateMode, setDateMode: setStoreDateMode } = useDateStore();
 
   const { data: datesData } = useQuery({
@@ -151,6 +152,8 @@ export default function AgentDetailPage() {
   const urlDateMode = searchParams.get('dateMode') as DateMode;
   const date = urlDate || selectedDate || latestDate;
   const dateMode = urlDateMode || storeDateMode || 'activity';
+  const decodedEmail = decodeURIComponent(email || '');
+  const agentName = decodedEmail.split('@')[0].replace(/[._]/g, ' ').replace(/_ext$/, '');
 
   useEffect(() => {
     if (urlDate && urlDate !== selectedDate) setSelectedDate(urlDate);
@@ -165,8 +168,9 @@ export default function AgentDetailPage() {
     }
   }, [latestDate, selectedDate, urlDate, datesData, setSelectedDate]);
 
-  const decodedEmail = decodeURIComponent(email || '');
-  const agentName = decodedEmail.split('@')[0].replace(/[._]/g, ' ').replace(/_ext$/, '');
+  useEffect(() => {
+    setInsightsEnabled(false);
+  }, [decodedEmail, date, dateMode]);
 
   const { data: ticketsData, isLoading: ticketsLoading } = useQuery({
     queryKey: ['agent-tickets', decodedEmail, date, dateMode],
@@ -220,12 +224,11 @@ export default function AgentDetailPage() {
   const cachedScores: Record<string, ScoreEntry> = scoresData?.data?.scores || {};
   const fallbackIds: Set<string> = new Set(scoresData?.data?.fallbackIds || []);
 
-  const { data: insightsData } = useQuery({
+  const { data: insightsData, isFetching: insightsFetching } = useQuery({
     queryKey: ['agent-insights', decodedEmail, date, dateMode, sampleTicketIdsForQuery.join(',')],
     queryFn: () => analysisApi.getAgentInsights(decodedEmail, date, dateMode, sampleTicketIdsForQuery.length > 0 ? sampleTicketIdsForQuery : undefined),
-    enabled: !!decodedEmail && !!date,
+    enabled: !!decodedEmail && !!date && insightsEnabled,
     staleTime: 1000 * 60,
-    refetchInterval: auditStatusData?.inProgress ? 4000 : false,
   });
   const insightsResult = insightsData?.data;
 
@@ -299,6 +302,7 @@ export default function AgentDetailPage() {
     },
     onSuccess: async () => {
       setReportCard(null);
+      setInsightsEnabled(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode, decodedEmail] }),
         queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode, decodedEmail] }),
@@ -559,59 +563,91 @@ export default function AgentDetailPage() {
         </div>
       </div>
 
-      {insightsResult?.stats && (
-        <div className="card mb-6 bg-gradient-to-br from-uh-purple/5 to-uh-cyan/5 border border-uh-purple/10">
-          <div className="flex items-start gap-3">
-            <div className="p-2 rounded-xl bg-uh-purple/20 shrink-0">
-              <Sparkles size={18} className="text-uh-purple" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-2">
+      <div className="card mb-6 bg-gradient-to-br from-uh-purple/5 to-uh-cyan/5 border border-uh-purple/10">
+        <div className="flex items-start gap-3">
+          <div className="p-2 rounded-xl bg-uh-purple/20 shrink-0">
+            <Sparkles size={18} className="text-uh-purple" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+              <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold">AI Insights</h3>
-                <span className="text-[10px] uppercase tracking-wide text-slate-400">
-                  Sample · {insightsResult.stats.analyzedCount}/{insightsResult.stats.totalTickets} audited
-                </span>
-              </div>
-              {insightsResult.insight ? (
-                <p className="text-sm text-slate-700 leading-relaxed">{insightsResult.insight}</p>
-              ) : insightsResult.stats.analyzedCount === 0 ? (
-                <p className="text-sm text-slate-500">Audit the 10-ticket sample below to unlock day-level insights and report card generation.</p>
-              ) : (
-                <p className="text-sm text-slate-500">Insight unavailable right now, but the audited sample is ready for manual review.</p>
-              )}
-              {insightsResult.stats.analyzedCount > 0 && (
-                <div className="flex items-center gap-4 mt-3 text-xs flex-wrap">
-                  <span className="flex items-center gap-1">
-                    <span className="font-semibold text-slate-700">Avg QA:</span>
-                    <span className={`font-bold ${
-                      (insightsResult.stats.avgScore ?? 0) >= 80 ? 'text-uh-success' :
-                      (insightsResult.stats.avgScore ?? 0) >= 60 ? 'text-uh-warning' : 'text-uh-error'
-                    }`}>
-                      {insightsResult.stats.avgScore ?? '—'}
-                    </span>
+                {insightsResult?.stats && (
+                  <span className="text-[10px] uppercase tracking-wide text-slate-400">
+                    Sample · {insightsResult.stats.analyzedCount}/{insightsResult.stats.totalTickets} audited
                   </span>
-                  {insightsResult.stats.lowScoreCount > 0 && (
-                    <span className="flex items-center gap-1 text-uh-error">
-                      <TrendingDown size={12} />
-                      {insightsResult.stats.lowScoreCount} low-score
-                    </span>
-                  )}
-                  {insightsResult.stats.topDeductionCategories?.length > 0 && (
-                    <span className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-slate-500">Top misses:</span>
-                      {insightsResult.stats.topDeductionCategories.slice(0, 3).map((item: any) => (
-                        <span key={item.category} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] capitalize">
-                          {item.category} <span className="font-semibold">×{item.count}</span>
-                        </span>
-                      ))}
-                    </span>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {insightsResult?.insight && !insightsFetching && (
+                  <button
+                    onClick={() => {
+                      queryClient.invalidateQueries({ queryKey: ['agent-insights'] });
+                    }}
+                    className="text-xs text-slate-400 hover:text-uh-purple transition-colors"
+                  >
+                    Refresh
+                  </button>
+                )}
+                {!insightsEnabled && (
+                  <button
+                    onClick={() => setInsightsEnabled(true)}
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-uh-purple text-white hover:bg-uh-purple/90 transition-all"
+                  >
+                    <Sparkles size={12} />
+                    Generate Insights
+                  </button>
+                )}
+              </div>
             </div>
+            {!insightsEnabled ? (
+              <p className="text-sm text-slate-500">
+                Click "Generate Insights" to get AI analysis of the audited sample tickets.
+              </p>
+            ) : insightsFetching ? (
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <Loader2 size={14} className="animate-spin text-uh-purple" />
+                Analyzing audited sample...
+              </div>
+            ) : insightsResult?.insight ? (
+              <p className="text-sm text-slate-700 leading-relaxed">{insightsResult.insight}</p>
+            ) : insightsResult?.stats?.analyzedCount === 0 ? (
+              <p className="text-sm text-slate-500">Audit the 10-ticket sample below to unlock day-level insights and report card generation.</p>
+            ) : (
+              <p className="text-sm text-slate-500">Insight unavailable right now. Try refreshing after auditing more tickets.</p>
+            )}
+            {insightsResult?.stats?.analyzedCount > 0 && (
+              <div className="flex items-center gap-4 mt-3 text-xs flex-wrap">
+                <span className="flex items-center gap-1">
+                  <span className="font-semibold text-slate-700">Avg QA:</span>
+                  <span className={`font-bold ${
+                    (insightsResult.stats.avgScore ?? 0) >= 80 ? 'text-uh-success' :
+                    (insightsResult.stats.avgScore ?? 0) >= 60 ? 'text-uh-warning' : 'text-uh-error'
+                  }`}>
+                    {insightsResult.stats.avgScore ?? '—'}
+                  </span>
+                </span>
+                {insightsResult.stats.lowScoreCount > 0 && (
+                  <span className="flex items-center gap-1 text-uh-error">
+                    <TrendingDown size={12} />
+                    {insightsResult.stats.lowScoreCount} low-score
+                  </span>
+                )}
+                {insightsResult.stats.topDeductionCategories?.length > 0 && (
+                  <span className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-slate-500">Top misses:</span>
+                    {insightsResult.stats.topDeductionCategories.slice(0, 3).map((item: any) => (
+                      <span key={item.category} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] capitalize">
+                        {item.category} <span className="font-semibold">×{item.count}</span>
+                      </span>
+                    ))}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
-      )}
+      </div>
 
       <div className="card mb-6 border border-uh-purple/10 bg-gradient-to-br from-white via-white to-uh-purple/5">
         <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">

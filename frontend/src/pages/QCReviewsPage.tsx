@@ -1,19 +1,29 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ThumbsUp, Flag, ClipboardList, TrendingUp, AlertTriangle, MessageSquare } from 'lucide-react';
+import { ThumbsUp, Flag, ClipboardList, TrendingUp, AlertTriangle, MessageSquare, Search, X } from 'lucide-react';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { analysisApi } from '../api/client';
 
 export default function QCReviewsPage() {
+  const [dateFilter, setDateFilter] = useState('');
+  const [agentFilter, setAgentFilter] = useState('');
+
   const { data, isLoading } = useQuery({
     queryKey: ['qc-reviews-all'],
     queryFn: () => analysisApi.getReviews(),
     staleTime: 1000 * 60 * 2,
   });
 
-  const reviews: any[] = data?.data?.reviews || [];
+  const allReviews: any[] = data?.data?.reviews || [];
   const summary = data?.data?.summary || { total: 0, approved: 0, flagged: 0, approvalRate: 0 };
   const byAgent: Record<string, { approved: number; flagged: number }> = data?.data?.byAgent || {};
+
+  const reviews = allReviews.filter(r => {
+    if (dateFilter && !(r.day || '').includes(dateFilter)) return false;
+    if (agentFilter && !(r.agentEmail || '').toLowerCase().includes(agentFilter.toLowerCase())) return false;
+    return true;
+  });
 
   const agentRows = Object.entries(byAgent)
     .map(([agent, counts]) => ({ agent, ...counts, total: counts.approved + counts.flagged }))
@@ -163,7 +173,46 @@ export default function QCReviewsPage() {
 
           {/* All reviews table */}
           <div className="card">
-            <h2 className="text-lg font-semibold mb-4">All Reviewed Tickets ({reviews.length})</h2>
+            <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
+              <h2 className="text-lg font-semibold">
+                All Reviewed Tickets
+                <span className="ml-2 text-sm font-normal text-slate-400">
+                  {reviews.length}{reviews.length !== allReviews.length ? ` of ${allReviews.length}` : ''}
+                </span>
+              </h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="relative">
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Filter by date (YYYY-MM-DD)"
+                    value={dateFilter}
+                    onChange={e => setDateFilter(e.target.value)}
+                    className="pl-7 pr-7 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:border-uh-purple w-52 transition-colors"
+                  />
+                  {dateFilter && (
+                    <button onClick={() => setDateFilter('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Filter by agent"
+                    value={agentFilter}
+                    onChange={e => setAgentFilter(e.target.value)}
+                    className="pl-7 pr-7 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:border-uh-purple w-40 transition-colors"
+                  />
+                  {agentFilter && (
+                    <button onClick={() => setAgentFilter('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>

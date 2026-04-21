@@ -8,6 +8,7 @@ import TicketsPage from './pages/TicketsPage';
 import CustomerPage from './pages/CustomerPage';
 import DefaultersPage from './pages/DefaultersPage';
 import QCReviewsPage from './pages/QCReviewsPage';
+import TrendsPage from './pages/TrendsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,6 +32,7 @@ function App() {
             <Route path="tickets" element={<TicketsPage />} />
             <Route path="defaulters" element={<DefaultersPage />} />
             <Route path="qc-reviews" element={<QCReviewsPage />} />
+            <Route path="trends" element={<TrendsPage />} />
           </Route>
         </Routes>
       </BrowserRouter>
