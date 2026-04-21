@@ -8,6 +8,7 @@ import {
   getAgentQATrend,
   getAgentsQATrends,
   getDailyPickTicketSummaries,
+  getDailyPicksFromDb,
   getQAReviewsBulk,
   getQAScoresBulk,
   DateMode
@@ -412,6 +413,58 @@ router.get('/defaulters', async (req, res) => {
   } catch (error) {
     console.error('Error fetching defaulters:', error);
     res.status(500).json({ error: 'Failed to fetch defaulters' });
+  }
+});
+
+// GET /api/agents/audit-summary?date=YYYY-MM-DD&dateMode=activity
+// Returns per-agent audit QA scores for the selected date's sample
+router.get('/audit-summary', async (req, res) => {
+  try {
+    const date = req.query.date as string;
+    const dateMode = ((req.query.dateMode as string) || 'activity') as DateMode;
+    if (!date) return res.status(400).json({ error: 'date is required' });
+
+    const allPicks = await getDailyPicksFromDb(date, dateMode);
+    if (allPicks.length === 0) {
+      return res.json({ agents: [], overall: { totalAudited: 0, avgQaScore: null, agentCount: 0 } });
+    }
+
+    const allTicketIds = allPicks.map(p => p.ticketId);
+    const scores = await getQAScoresBulk(allTicketIds);
+
+    const agentMap = new Map<string, { picks: typeof allPicks; qaScores: number[] }>();
+    for (const pick of allPicks) {
+      if (!agentMap.has(pick.agentEmail)) agentMap.set(pick.agentEmail, { picks: [], qaScores: [] });
+      const entry = agentMap.get(pick.agentEmail)!;
+      entry.picks.push(pick);
+      const s = (scores as any)[pick.ticketId];
+      if (s && typeof s.qaScore === 'number') entry.qaScores.push(s.qaScore);
+    }
+
+    const agents = Array.from(agentMap.entries()).map(([agentEmail, data]) => ({
+      agentEmail,
+      sampleSize: data.picks.length,
+      auditedCount: data.picks.filter(p => p.analyzed).length,
+      avgQaScore: data.qaScores.length > 0
+        ? Math.round(data.qaScores.reduce((a, b) => a + b, 0) / data.qaScores.length * 10) / 10
+        : null,
+      lowScoreCount: data.qaScores.filter(s => s < 60).length,
+      scores: data.qaScores,
+    })).sort((a, b) => (b.avgQaScore ?? 0) - (a.avgQaScore ?? 0));
+
+    const allQaScores = agents.flatMap(a => a.scores);
+    const overall = {
+      totalAudited: agents.reduce((sum, a) => sum + a.auditedCount, 0),
+      avgQaScore: allQaScores.length > 0
+        ? Math.round(allQaScores.reduce((a, b) => a + b, 0) / allQaScores.length * 10) / 10
+        : null,
+      agentCount: agents.filter(a => a.auditedCount > 0).length,
+    };
+
+    res.json({ agents, overall });
+  } catch (error) {
+    console.error('Error fetching audit summary:', error);
+    res.status(500).json({ error: 'Failed to fetch audit summary' });
   }
 });
 

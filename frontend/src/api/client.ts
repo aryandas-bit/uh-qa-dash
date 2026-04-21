@@ -50,6 +50,8 @@ export const agentsApi = {
     api.get(`/agents/${encodeURIComponent(email)}/report-card?date=${date}&dateMode=${dateMode}`, { timeout: 120000 }),
   auditNow: (email: string, date: string, dateMode: DateMode = 'activity', count = 10) =>
     api.post('/agents/audit-now', { email, date, dateMode, count }, { timeout: 120000 }),
+  getAuditSummary: (date: string, dateMode: DateMode = 'activity') =>
+    api.get(`/agents/audit-summary?date=${date}&dateMode=${dateMode}`),
 };
 
 export const ticketsApi = {
@@ -76,8 +78,8 @@ export const analysisApi = {
     api.get(`/analysis/reviews${ticketIds?.length ? `?ticketIds=${ticketIds.join(',')}` : ''}`),
   getCachedScores: (ticketIds: string[]) =>
     api.get(`/analysis/cached-scores${ticketIds.length ? `?ticketIds=${ticketIds.join(',')}` : ''}`),
-  getAgentInsights: (email: string, date: string, dateMode: DateMode = 'activity') =>
-    api.get(`/analysis/agent/${encodeURIComponent(email)}/insights?date=${date}&dateMode=${dateMode}`),
+  getAgentInsights: (email: string, date: string, dateMode: DateMode = 'activity', sampleTicketIds?: string[]) =>
+    api.get(`/analysis/agent/${encodeURIComponent(email)}/insights?date=${date}&dateMode=${dateMode}${sampleTicketIds?.length ? `&ticketIds=${sampleTicketIds.join(',')}` : ''}`),
 };
 
 export const customersApi = {

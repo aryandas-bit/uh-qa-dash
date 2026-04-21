@@ -703,10 +703,15 @@ router.get('/agent/:email/insights', async (req, res) => {
 
     if (!date) return res.status(400).json({ error: 'Date parameter is required' });
 
+    // If sampleOnly ticket IDs are passed, scope insights to those only
+    const sampleFilter = req.query.ticketIds
+      ? (req.query.ticketIds as string).split(',').filter(Boolean)
+      : null;
+
     const tickets = await getAgentTickets(decodedEmail, date, 500, 0, dateMode);
     if (tickets.length === 0) return res.json({ insight: null, stats: null });
 
-    const ticketIds = tickets.map(t => String(t.TICKET_ID));
+    const ticketIds = sampleFilter || tickets.map(t => String(t.TICKET_ID));
     const scores = await getQAScoresBulk(ticketIds);
     const analyzedEntries = Object.values(scores) as Array<{ qaScore: number; summary: string | null; deductions: Array<{ category: string; points: number; reason: string }> }>;
 

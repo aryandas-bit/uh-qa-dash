@@ -369,10 +369,10 @@ export async function runDailyAudit(
     return getAuditStatus(date, dateMode, normalizedAgentEmail);
   }
 
-  // Ensure picks exist
+  // Only use existing picks — never auto-generate from the audit trigger
   const { picks } = await getDailyPicks(date, DEFAULT_PICKS_PER_AGENT, dateMode, {
     agentEmail: normalizedAgentEmail,
-    autoGenerate: !normalizedAgentEmail,
+    autoGenerate: false,
   });
   const unanalyzed = picks.filter(p => !p.analyzed);
 
@@ -468,32 +468,16 @@ async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyP
 
   if (validPicks.length === 0) return;
 
-  // Stage 1 — Triage all picks in parallel (GROQ_CONCURRENCY chunks)
-  console.log(`[DailyAudit] Stage 1: triaging ${validPicks.length} tickets...`);
-  const digestMap = new Map<string, TriageDigest>();
-  for (let i = 0; i < validPicks.length; i += GROQ_CONCURRENCY) {
-    const chunk = validPicks.slice(i, i + GROQ_CONCURRENCY);
-    await Promise.all(chunk.map(async (pick) => {
-      const ticket = ticketMap.get(pick.ticketId)!;
-      const { firstCustomer, lastAgent, totalTurns } = parseMessagesForHybrid(ticket.MESSAGES_JSON);
-      try {
-        const digest = await triageTicket(pick.ticketId, firstCustomer, lastAgent, totalTurns);
-        digestMap.set(pick.ticketId, digest);
-      } catch (err) {
-        console.warn(`[DailyAudit] Triage failed for ${pick.ticketId}:`, (err as Error).message);
-      }
-    }));
-  }
+  // Stage 1 — Gemini deep analysis (PRIMARY QA SCORER, GEMINI_CONCURRENCY chunks)
+  console.log(`[DailyAudit] Stage 1: Gemini analyzing ${validPicks.length} tickets...`);
+  const geminiResultMap = new Map<string, any>();
 
-  // Stage 2 — Judge all picks in parallel with digests (GEMINI_CONCURRENCY chunks)
-  console.log(`[DailyAudit] Stage 2: judging ${validPicks.length} tickets...`);
   for (let i = 0; i < validPicks.length; i += GEMINI_CONCURRENCY) {
     const chunk = validPicks.slice(i, i + GEMINI_CONCURRENCY);
     await Promise.all(chunk.map(async (pick) => {
       const judgeStart = Date.now();
       try {
         const ticket = ticketMap.get(pick.ticketId)!;
-        const triage = digestMap.get(pick.ticketId);
         const issueSignature = buildIssueSignature(ticket);
 
         let customerHistory: CustomerTicketHistory[] = [];
@@ -522,52 +506,27 @@ async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyP
           auditMemories = await memoryCache.get(memoryKey)!;
         }
 
-        let analysis: any;
-        let isFallback = false;
-        let analysisPath = triage ? 'triage+judge' : 'judge-only';
+        // Gemini runs first, independently — no Groq triage context needed
+        const analysis = await analyzeTicket(
+          pick.ticketId,
+          ticket.MESSAGES_JSON,
+          ticket.GROUP_NAME,
+          ticket.TAGS,
+          customerHistory,
+          auditMemories,
+          undefined
+        );
 
-        try {
-          analysis = await analyzeTicket(
-            pick.ticketId,
-            ticket.MESSAGES_JSON,
-            ticket.GROUP_NAME,
-            ticket.TAGS,
-            customerHistory,
-            auditMemories,
-            triage
-          );
-        } catch (geminiErr) {
-          if (triage) {
-            const { convertDigestToProvisionalAnalysis } = await import('./groq.service.js');
-            analysis = convertDigestToProvisionalAnalysis(triage);
-            isFallback = true;
-            analysisPath = 'triage-only';
-            console.warn(`[DailyAudit] Gemini failed for ${pick.ticketId}, using triage fallback`);
-          } else {
-            throw geminiErr;
-          }
-        }
+        geminiResultMap.set(pick.ticketId, { analysis, issueSignature, ticket });
 
-        console.log(JSON.stringify({
-          event: 'audit_ticket',
-          ticketId: pick.ticketId,
-          analysisPath,
-          isFallback,
-          triageMs: digestMap.has(pick.ticketId) ? (triage?.analyzeTime || 0) : 0,
-          judgeMs: Date.now() - judgeStart,
-        }));
+        // Save QA score immediately so it's visible before Groq stage completes
+        saveQAScore(pick.ticketId, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
+          console.error('[DailyAudit] Failed to persist QA score:', e)
+        );
 
-        const extendedAnalysis = { ...analysis, triage: triage || null, isFallback, analysisPath };
-        await saveTicketAnalysis(pick.ticketId, extendedAnalysis, 'daily_audit');
-
-        if (!isFallback) {
-          saveQAScore(pick.ticketId, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
-            console.error('[DailyAudit] Failed to persist QA score:', e)
-          );
-        }
-
+        // Save audit memory
         if (ticket.VISITOR_EMAIL) {
-          await saveAuditMemory({
+          saveAuditMemory({
             customerEmail: ticket.VISITOR_EMAIL,
             issueSignature,
             category: ticket.GROUP_NAME,
@@ -584,18 +543,71 @@ async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyP
             deductionSummary: buildDeductionSummary(analysis),
             missedSteps: analysis.sopCompliance?.missedSteps?.join(' | ') || null,
             suggestions: analysis.suggestions?.slice(0, 3).join(' | ') || null,
-            qaScore: isFallback ? null : (analysis.qaScore ?? null),
-          });
+            qaScore: analysis.qaScore ?? null,
+          }).catch(e => console.error('[DailyAudit] Failed to save audit memory:', e));
         }
-        await markPickAnalyzed(date, dateMode, pick.ticketId, 'success');
+
+        console.log(JSON.stringify({
+          event: 'audit_gemini',
+          ticketId: pick.ticketId,
+          qaScore: analysis.qaScore,
+          judgeMs: Date.now() - judgeStart,
+        }));
       } catch (error) {
-        console.error(`[DailyAudit] Failed ticket ${pick.ticketId}:`, (error as Error).message);
-        await markPickAnalyzed(date, dateMode, pick.ticketId, 'error');
+        console.error(`[DailyAudit] Gemini failed for ${pick.ticketId}:`, (error as Error).message);
+        // Groq fallback will handle this in Stage 2
       }
     }));
     if (i + GEMINI_CONCURRENCY < validPicks.length) {
       await new Promise(r => setTimeout(r, AUDIT_CHUNK_DELAY_MS));
     }
+  }
+
+  // Stage 2 — Groq lighter triage (SUPPLEMENTARY, runs after Gemini, GROQ_CONCURRENCY chunks)
+  console.log(`[DailyAudit] Stage 2: Groq enriching ${validPicks.length} tickets...`);
+  for (let i = 0; i < validPicks.length; i += GROQ_CONCURRENCY) {
+    const chunk = validPicks.slice(i, i + GROQ_CONCURRENCY);
+    await Promise.all(chunk.map(async (pick) => {
+      const ticket = ticketMap.get(pick.ticketId)!;
+      const { firstCustomer, lastAgent, totalTurns } = parseMessagesForHybrid(ticket.MESSAGES_JSON);
+
+      let triage: TriageDigest | null = null;
+      try {
+        triage = await triageTicket(pick.ticketId, firstCustomer, lastAgent, totalTurns);
+      } catch (err) {
+        console.warn(`[DailyAudit] Groq triage failed for ${pick.ticketId}:`, (err as Error).message);
+      }
+
+      const geminiResult = geminiResultMap.get(pick.ticketId);
+
+      if (geminiResult) {
+        // Gemini succeeded — save enriched analysis with Groq triage metadata
+        const extendedAnalysis = {
+          ...geminiResult.analysis,
+          triage: triage || null,
+          isFallback: false,
+          analysisPath: triage ? 'gemini+groq' : 'gemini-only',
+        };
+        await saveTicketAnalysis(pick.ticketId, extendedAnalysis, 'daily_audit');
+        await markPickAnalyzed(date, dateMode, pick.ticketId, 'success');
+      } else if (triage) {
+        // Gemini failed but Groq has triage — use as provisional fallback
+        const { convertDigestToProvisionalAnalysis } = await import('./groq.service.js');
+        const fallbackAnalysis = convertDigestToProvisionalAnalysis(triage);
+        await saveTicketAnalysis(pick.ticketId, {
+          ...fallbackAnalysis,
+          triage,
+          isFallback: true,
+          analysisPath: 'groq-fallback',
+        }, 'daily_audit');
+        await markPickAnalyzed(date, dateMode, pick.ticketId, 'success');
+        console.warn(`[DailyAudit] Using Groq fallback for ${pick.ticketId}`);
+      } else {
+        // Both failed
+        await markPickAnalyzed(date, dateMode, pick.ticketId, 'error');
+        console.error(`[DailyAudit] Both Gemini and Groq failed for ${pick.ticketId}`);
+      }
+    }));
   }
 }
 

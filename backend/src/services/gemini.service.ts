@@ -25,8 +25,8 @@ const LEGACY_GEMINI_MODELS = new Set([
 const GEMINI_MODEL_CANDIDATES = buildModelCandidates(CONFIGURED_GEMINI_MODEL);
 
 console.log(
-  `[LLM Config] provider=${process.env.GROQ_API_KEY ? 'groq' : 'gemini'} model=${process.env.GROQ_API_KEY ? GROQ_MODEL : CONFIGURED_GEMINI_MODEL} ` +
-  `maxMessages=${MAX_SELECTED_MESSAGES} ` +
+  `[LLM Config] analysis=gemini model=${CONFIGURED_GEMINI_MODEL} (fallbacks: gemini-2.0-flash, gemini-1.5-flash) ` +
+  `groqTriage=${GROQ_MODEL} maxMessages=${MAX_SELECTED_MESSAGES} ` +
   `maxMsgChars=${MAX_MESSAGE_CHARS} maxTranscript=${MAX_TRANSCRIPT_CHARS} ` +
   `maxHistory=${MAX_HISTORY_TICKETS} maxSopSteps=${MAX_SOP_STEPS} ` +
   `batchDelay=${INTER_BATCH_DELAY_MS}ms maxOutputTokens=${MAX_OUTPUT_TOKENS}`
@@ -717,12 +717,8 @@ function truncateText(text: string, maxLength: number): string {
 }
 
 async function callLLM(prompt: string): Promise<{ candidates: { content: { parts: { text: string }[] } }[] }> {
-  const groqKey = process.env.GROQ_API_KEY;
-  if (groqKey) {
-    return callGroq(prompt, groqKey);
-  }
   const geminiKey = process.env.GEMINI_API_KEY;
-  if (!geminiKey) throw new Error('No AI API key set (GROQ_API_KEY or GEMINI_API_KEY required)');
+  if (!geminiKey) throw new Error('GEMINI_API_KEY is required for ticket QA analysis');
   return callGemini(prompt, geminiKey);
 }
 
@@ -861,6 +857,8 @@ function buildModelCandidates(configuredModel: string): string[] {
   return [...new Set([
     configuredModel,
     'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
   ].filter(Boolean))];
 }
 

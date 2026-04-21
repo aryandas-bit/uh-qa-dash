@@ -2,14 +2,13 @@ import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle,
   ArrowLeft,
   Calendar,
   CalendarCheck,
   CheckCircle,
   Copy,
   ChevronDown,
-  Clock,
+  ClipboardCheck,
   Download,
   FileText,
   Flag,
@@ -216,9 +215,11 @@ export default function AgentDetailPage() {
   const cachedScores: Record<string, ScoreEntry> = scoresData?.data?.scores || {};
   const fallbackIds: Set<string> = new Set(scoresData?.data?.fallbackIds || []);
 
+  const sampleTicketIdsForQuery = (picksData?.picks || []).map((p: any) => String(p.ticketId));
+
   const { data: insightsData } = useQuery({
-    queryKey: ['agent-insights', decodedEmail, date, dateMode],
-    queryFn: () => analysisApi.getAgentInsights(decodedEmail, date, dateMode),
+    queryKey: ['agent-insights', decodedEmail, date, dateMode, sampleTicketIdsForQuery.join(',')],
+    queryFn: () => analysisApi.getAgentInsights(decodedEmail, date, dateMode, sampleTicketIdsForQuery.length > 0 ? sampleTicketIdsForQuery : undefined),
     enabled: !!decodedEmail && !!date,
     staleTime: 1000 * 60,
     refetchInterval: auditStatusData?.inProgress ? 4000 : false,
@@ -264,16 +265,6 @@ export default function AgentDetailPage() {
 
   const totalTickets = tickets.length;
   const resolvedCount = tickets.filter((ticket) => isResolvedStatus(ticket.TICKET_STATUS)).length;
-  const validResponseTimes = tickets
-    .map((ticket) => Number(ticket.FIRST_RESPONSE_DURATION_SECONDS))
-    .filter((value) => Number.isFinite(value) && value > 0 && value < 86400);
-  const avgResponseTime = validResponseTimes.length > 0
-    ? Math.round(validResponseTimes.reduce((sum, value) => sum + value, 0) / validResponseTimes.length)
-    : null;
-  const lowCsatCount = tickets.filter((ticket) => {
-    const numericCsat = Number(ticket.TICKET_CSAT);
-    return Number.isFinite(numericCsat) && numericCsat > 0 && numericCsat < 3;
-  }).length;
 
   const issueBreakdown = sampleRows.reduce<Record<string, number>>((acc, row) => {
     const subject = row.pick.ticket?.subject || 'Unknown';
@@ -285,6 +276,10 @@ export default function AgentDetailPage() {
     .slice(0, 15) as [string, number][];
 
   const sampleAuditedCount = sampleRows.filter((row) => row.score).length;
+  const auditedScores = sampleRows.filter((row) => row.score).map((row) => row.score!.qaScore);
+  const sampleAvgQaScore = auditedScores.length > 0
+    ? Math.round(auditedScores.reduce((sum, s) => sum + s, 0) / auditedScores.length)
+    : null;
   const sampleReviewedCount = sampleRows.filter((row) => row.review).length;
   const sampleApprovedCount = sampleRows.filter((row) => row.review?.status === 'approved').length;
   const sampleFlaggedCount = sampleRows.filter((row) => row.review?.status === 'flagged').length;
@@ -532,21 +527,31 @@ export default function AgentDetailPage() {
           </div>
         </div>
         <div className="card flex items-center gap-4">
-          <div className="p-3 rounded-xl bg-uh-cyan/20">
-            <Clock size={24} className="text-uh-cyan" />
+          <div className="p-3 rounded-xl bg-uh-purple/20">
+            <Sparkles size={24} className="text-uh-purple" />
           </div>
           <div>
-            <p className="text-slate-500 text-sm">Avg Response</p>
-            <p className="text-3xl font-bold">{formatTime(avgResponseTime)}</p>
+            <p className="text-slate-500 text-sm">Avg QA Score</p>
+            <p className={`text-3xl font-bold ${
+              sampleAvgQaScore === null ? 'text-slate-300' :
+              sampleAvgQaScore >= 80 ? 'text-uh-success' :
+              sampleAvgQaScore >= 60 ? 'text-uh-warning' : 'text-uh-error'
+            }`}>
+              {sampleAvgQaScore ?? '—'}
+            </p>
+            <p className="text-xs text-slate-400">audited sample</p>
           </div>
         </div>
         <div className="card flex items-center gap-4">
-          <div className="p-3 rounded-xl bg-uh-error/20">
-            <AlertTriangle size={24} className="text-uh-error" />
+          <div className="p-3 rounded-xl bg-uh-cyan/20">
+            <ClipboardCheck size={24} className="text-uh-cyan" />
           </div>
           <div>
-            <p className="text-slate-500 text-sm">Low CSAT</p>
-            <p className="text-3xl font-bold">{lowCsatCount}</p>
+            <p className="text-slate-500 text-sm">Audited Today</p>
+            <p className="text-3xl font-bold">{sampleAuditedCount}</p>
+            {sampleRows.length > 0 && (
+              <p className="text-xs text-slate-400">of {sampleRows.length} sampled</p>
+            )}
           </div>
         </div>
       </div>
@@ -561,7 +566,7 @@ export default function AgentDetailPage() {
               <div className="flex items-center gap-2 mb-2">
                 <h3 className="text-sm font-semibold">AI Insights</h3>
                 <span className="text-[10px] uppercase tracking-wide text-slate-400">
-                  Groq · {insightsResult.stats.analyzedCount}/{insightsResult.stats.totalTickets} audited
+                  Sample · {insightsResult.stats.analyzedCount}/{insightsResult.stats.totalTickets} audited
                 </span>
               </div>
               {insightsResult.insight ? (
@@ -610,10 +615,10 @@ export default function AgentDetailPage() {
           <div>
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <Layers3 size={18} className="text-uh-purple" />
-              Daily Audit Sample
+              New Daily Order
             </h2>
             <p className="text-sm text-slate-500 mt-1">
-              Click `Run Audits` to instantly create a random 10-ticket sample for this agent, start auditing it right away, and refresh the Groq summary on this page.
+              Click "Run Audits" to generate a random 10-ticket sample, score each ticket with Gemini, and refresh AI insights scoped to this sample.
             </p>
             {auditStatusData?.inProgress && (
               <p className="text-xs text-uh-purple mt-2 flex items-center gap-1.5">
@@ -678,7 +683,7 @@ export default function AgentDetailPage() {
         )}
 
         {sampleRows.length === 0 ? (
-          <p className="text-sm text-slate-400">No sample exists yet for this agent on this date. Click `Run Audits` to generate one instantly.</p>
+          <p className="text-sm text-slate-400">No daily order sample exists yet for this agent on this date. Click "Run Audits" to generate one instantly.</p>
         ) : (
           <div className="space-y-3">
             {sampleRows.map((row) => (
