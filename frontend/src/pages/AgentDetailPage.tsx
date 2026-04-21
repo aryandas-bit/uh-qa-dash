@@ -285,7 +285,7 @@ export default function AgentDetailPage() {
   const sampleReviewedCount = sampleRows.filter((row) => row.review).length;
   const sampleApprovedCount = sampleRows.filter((row) => row.review?.status === 'approved').length;
   const sampleFlaggedCount = sampleRows.filter((row) => row.review?.status === 'flagged').length;
-  const reportReady = sampleRows.length > 0 && sampleRows.every((row) => row.score && row.review);
+  const reportReady = sampleAuditedCount > 0;
 
   const auditNowMutation = useMutation({
     mutationFn: async () => {
@@ -667,7 +667,7 @@ export default function AgentDetailPage() {
           </span>
           {!reportReady && sampleRows.length > 0 && (
             <span className="text-xs text-slate-400">
-              Report card unlocks after all sampled tickets have both an audit and a manual review.
+              Report card unlocks after at least one ticket is audited.
             </span>
           )}
         </div>

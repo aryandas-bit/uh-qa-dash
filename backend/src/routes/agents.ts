@@ -265,25 +265,21 @@ router.get('/:email/report-card', async (req, res) => {
       getQAScoresBulk(sampleTicketIds),
     ]);
 
-    const missingReviews = sampleTicketIds.filter((ticketId) => !reviews[ticketId]);
-    const missingScores = sampleTicketIds.filter((ticketId) => !scores[ticketId]);
-
-    if (missingReviews.length > 0 || missingScores.length > 0) {
+    // Only require scores — reviews are optional manual QC enrichment
+    const auditedIds = sampleTicketIds.filter((ticketId) => scores[ticketId]);
+    if (auditedIds.length === 0) {
       return res.status(409).json({
-        error: 'All sampled tickets must be audited and reviewed before creating a report card',
-        missingReviews,
-        missingScores,
-        reviewedCount: sampleTicketIds.length - missingReviews.length,
-        auditedCount: sampleTicketIds.length - missingScores.length,
+        error: 'No audited tickets found — run audits first before creating a report card',
+        auditedCount: 0,
         requiredCount: sampleTicketIds.length,
       });
     }
 
-    const scoreEntries = sampleTicketIds.map((ticketId) => ({ ticketId, ...scores[ticketId] }));
+    const scoreEntries = auditedIds.map((ticketId) => ({ ticketId, ...scores[ticketId] }));
     const avgScore = scoreEntries.reduce((sum, entry) => sum + entry.qaScore, 0) / scoreEntries.length;
     const approvedCount = sampleTicketIds.filter((ticketId) => reviews[ticketId]?.status === 'approved').length;
     const flaggedCount = sampleTicketIds.filter((ticketId) => reviews[ticketId]?.status === 'flagged').length;
-    const verifiedCount = sampleTicketIds.length;
+    const verifiedCount = sampleTicketIds.filter((ticketId) => reviews[ticketId]).length;
 
     const deductionCounts: Record<string, number> = {};
     scoreEntries.forEach((entry) => {
@@ -356,10 +352,11 @@ router.get('/:email/report-card', async (req, res) => {
       dateMode,
       overallAssessment: buildOverallAssessment(avgScore, flaggedCount),
       summary: `${decodedEmail.split('@')[0].replace(/[._]/g, ' ')} handled ${ticketResult.length} tickets on ${date}. ` +
-        `The verified 10-ticket sample averaged ${Math.round(avgScore)}/100, with ${approvedCount} approved and ${flaggedCount} flagged audits.`,
+        `The ${auditedIds.length}-ticket audited sample averaged ${Math.round(avgScore)}/100` +
+        `${verifiedCount > 0 ? `, with ${approvedCount} approved and ${flaggedCount} flagged in QC review` : ''}.`,
       sample: {
         requiredCount: sampleTicketIds.length,
-        auditedCount: sampleTicketIds.length,
+        auditedCount: auditedIds.length,
         reviewedCount: verifiedCount,
         approvedCount,
         flaggedCount,
