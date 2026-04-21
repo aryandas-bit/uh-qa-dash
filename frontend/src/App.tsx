@@ -22,7 +22,7 @@ const queryClient = new QueryClient({
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      <BrowserRouter basename="/qc-automation">
         <Routes>
           <Route path="/" element={<Layout />}>
             <Route index element={<DashboardPage />} />
