@@ -440,6 +440,18 @@ export default function AgentDetailPage() {
     }
   };
 
+  const formatScoreCell = (score: number | null) => {
+    if (score === null || score === undefined) return 'NA';
+    return `${Math.round(score)} / 100`;
+  };
+
+  const getDeductionReason = (ticketId: string, category: 'opening' | 'process' | 'chat_handling' | 'closing' | 'fatal') => {
+    const entry = cachedScores[String(ticketId)];
+    if (!entry?.deductions?.length) return 'NA';
+    const reason = entry.deductions.find((item) => String(item.category || '').toLowerCase() === category)?.reason;
+    return reason || 'NA';
+  };
+
   const ReviewBadge = ({ ticketId }: { ticketId: string }) => {
     const review = reviews[ticketId];
     if (!review) return null;
@@ -877,87 +889,65 @@ export default function AgentDetailPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
-            <div className="p-3 rounded-xl bg-slate-50">
-              <p className="text-xs text-slate-400 mb-1">Sample Avg QA</p>
-              <p className="text-2xl font-bold">{reportCard.sample.avgQaScore}</p>
-            </div>
-            <div className="p-3 rounded-xl bg-slate-50">
-              <p className="text-xs text-slate-400 mb-1">Verified Sample</p>
-              <p className="text-2xl font-bold">{reportCard.sample.reviewedCount}/{reportCard.sample.requiredCount}</p>
-            </div>
-            <div className="p-3 rounded-xl bg-slate-50">
-              <p className="text-xs text-slate-400 mb-1">Approved</p>
-              <p className="text-2xl font-bold text-uh-success">{reportCard.sample.approvedCount}</p>
-            </div>
-            <div className="p-3 rounded-xl bg-slate-50">
-              <p className="text-xs text-slate-400 mb-1">Flagged</p>
-              <p className="text-2xl font-bold text-uh-error">{reportCard.sample.flaggedCount}</p>
-            </div>
-          </div>
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full text-xs min-w-[1300px] border-collapse">
+              <thead>
+                <tr className="bg-[#5b3f88] text-white">
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Month</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Associate</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Ticket ID</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Opening</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Process Miss</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Chat Handling</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Closing</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">DSAT Reason</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Fatal</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Feedback</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Score</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Final Score</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Comments</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reportCard.reviewedSample.map((item) => {
+                  const ticketId = String(item.ticketId);
+                  const ticket = sampleRows.find((row) => String(row.pick.ticketId) === ticketId)?.ticket;
+                  const numericCsat = Number(ticket?.TICKET_CSAT);
+                  const dsatReason = Number.isFinite(numericCsat) && numericCsat > 0 && numericCsat <= 2
+                    ? 'Low CSAT'
+                    : 'NA';
+                  const feedback = cachedScores[ticketId]?.summary || 'NA';
+                  const score = item.qaScore;
+                  const month = date
+                    ? new Date(`${date}T00:00:00`).toLocaleString('en-US', { month: 'short' })
+                    : 'NA';
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div>
-              <h3 className="text-sm font-semibold text-slate-700 mb-2">Strengths</h3>
-              <div className="space-y-2">
-                {reportCard.strengths.map((item) => (
-                  <div key={item} className="p-3 rounded-xl bg-uh-success/5 border border-uh-success/10 text-sm text-slate-700">
-                    {item}
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-slate-700 mb-2">Coaching Priorities</h3>
-              <div className="space-y-2">
-                {reportCard.coachingPriorities.map((item) => (
-                  <div key={item} className="p-3 rounded-xl bg-uh-warning/5 border border-uh-warning/10 text-sm text-slate-700">
-                    {item}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-            <div>
-              <h3 className="text-sm font-semibold text-slate-700 mb-2">Top Miss Categories</h3>
-              <div className="space-y-2">
-                {reportCard.topDeductionCategories.length === 0 ? (
-                  <p className="text-sm text-slate-400">No recurring miss categories in the verified sample.</p>
-                ) : reportCard.topDeductionCategories.map((item) => (
-                  <div key={item.category} className="flex items-center justify-between p-3 rounded-xl bg-slate-50">
-                    <span className="text-sm text-slate-700">{item.label}</span>
-                    <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-uh-purple/10 text-uh-purple">
-                      ×{item.count}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-slate-700 mb-2">Flagged Tickets</h3>
-              <div className="space-y-2">
-                {reportCard.flaggedTickets.length === 0 ? (
-                  <p className="text-sm text-slate-400">No flagged sample tickets in this report card.</p>
-                ) : reportCard.flaggedTickets.map((item) => (
-                  <Link
-                    key={item.ticketId}
-                    to={`/ticket/${item.ticketId}`}
-                    className="block p-3 rounded-xl bg-slate-50 hover:bg-slate-100 transition-all"
-                  >
-                    <div className="flex items-center justify-between gap-3 mb-1">
-                      <span className="text-uh-cyan font-mono text-xs">#{item.ticketId}</span>
-                      <span className="text-xs font-semibold text-uh-error">{item.qaScore ?? '—'}</span>
-                    </div>
-                    <p className="text-sm text-slate-700 truncate">{item.subject}</p>
-                    {(item.reviewNote || item.deductionSummary) && (
-                      <p className="text-xs text-slate-400 mt-1 truncate">{item.reviewNote || item.deductionSummary}</p>
-                    )}
-                  </Link>
-                ))}
-              </div>
-            </div>
+                  return (
+                    <tr key={ticketId} className="odd:bg-slate-50 even:bg-white text-slate-700">
+                      <td className="px-3 py-2 border border-slate-200 text-center">{month}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{formatAgentName(decodedEmail)}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">
+                        <Link to={`/ticket/${ticketId}`} className="text-uh-cyan hover:underline font-medium">
+                          {ticketId}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{getDeductionReason(ticketId, 'opening')}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{getDeductionReason(ticketId, 'process')}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{getDeductionReason(ticketId, 'chat_handling')}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{getDeductionReason(ticketId, 'closing')}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{dsatReason}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{getDeductionReason(ticketId, 'fatal')}</td>
+                      <td className="px-3 py-2 border border-slate-200 max-w-[280px] truncate" title={feedback}>{feedback}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{formatScoreCell(score)}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center font-semibold">{formatScoreCell(score)}</td>
+                      <td className="px-3 py-2 border border-slate-200 max-w-[260px] truncate" title={item.reviewNote || ''}>
+                        {item.reviewNote || 'NA'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

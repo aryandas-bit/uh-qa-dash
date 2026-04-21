@@ -616,6 +616,12 @@ async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyP
         // Gemini failed but Groq has triage — use as provisional fallback
         const { convertDigestToProvisionalAnalysis } = await import('./groq.service.js');
         const fallbackAnalysis = convertDigestToProvisionalAnalysis(triage);
+        await saveQAScore(
+          pick.ticketId,
+          fallbackAnalysis.qaScore,
+          fallbackAnalysis.summary,
+          fallbackAnalysis.deductions
+        ).catch(e => console.error('[DailyAudit] Fallback qa_score save failed:', e));
         await saveTicketAnalysis(pick.ticketId, {
           ...fallbackAnalysis,
           triage,

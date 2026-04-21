@@ -1,9 +1,24 @@
 import { google } from 'googleapis';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID || '1DyAe6X8KxxWs9K6Qor3yLLMWDBjoj8KayrXEk489yAs';
-const CREDENTIALS_PATH = process.env.GOOGLE_CREDENTIALS_PATH ||
-  path.join(process.cwd(), 'qa-dashboard-491311-7ec519d746d0.json');
+const DEFAULT_CREDENTIALS_FILE = 'qa-dashboard-491311-7ec519d746d0.json';
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+
+function resolveCredentialsPath(): string {
+  const fromEnv = process.env.GOOGLE_CREDENTIALS_PATH?.trim();
+  const candidates = [
+    fromEnv,
+    path.join(process.cwd(), 'backend', DEFAULT_CREDENTIALS_FILE),
+    path.join(process.cwd(), DEFAULT_CREDENTIALS_FILE),
+    path.resolve(moduleDir, '../../', DEFAULT_CREDENTIALS_FILE),
+  ].filter(Boolean) as string[];
+
+  const existing = candidates.find((candidate) => fs.existsSync(candidate));
+  return existing || candidates[0] || path.join(process.cwd(), DEFAULT_CREDENTIALS_FILE);
+}
 const SHEET_NAME = 'QC Reviews';
 
 const HEADERS = [
@@ -22,7 +37,7 @@ function getAuth() {
     });
   }
   return new google.auth.GoogleAuth({
-    keyFile: CREDENTIALS_PATH,
+    keyFile: resolveCredentialsPath(),
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
 }

@@ -338,12 +338,11 @@ router.get('/ticket/:id', async (req, res) => {
     };
     await saveTicketAnalysis(id, extendedAnalysis, 'manual');
     analysisCache.set(id, extendedAnalysis);
-    // Only persist QA score if Gemini was the source (not a fallback)
-    if (!hybridResult.isFallback) {
-      saveQAScore(id, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
-        console.error('[Analysis] Failed to persist QA score:', e)
-      );
-    }
+    // Persist QA score for both Gemini and fallback analyses so downstream views
+    // (trend/report-card/review sheet sync) always have a numeric value.
+    saveQAScore(id, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
+      console.error('[Analysis] Failed to persist QA score:', e)
+    );
 
     const review = await getQAReview(id);
 

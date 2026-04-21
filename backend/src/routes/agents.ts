@@ -245,12 +245,6 @@ router.get('/:email/report-card', async (req, res) => {
       return res.status(400).json({ error: 'Date parameter is required' });
     }
 
-    const cacheKey = `agent_report_card_${decodedEmail}_${date}_${dateMode}`;
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      return res.json(cached);
-    }
-
     const [ticketResult, pickResult] = await Promise.all([
       getAgentTickets(decodedEmail, date, 500, 0, dateMode),
       getDailyPicks(date, 10, dateMode, { agentEmail: decodedEmail, autoGenerate: false }),
@@ -388,7 +382,6 @@ router.get('/:email/report-card', async (req, res) => {
       })),
     };
 
-    cache.set(cacheKey, reportCard, 60 * 10);
     res.json(reportCard);
   } catch (error) {
     console.error('Error generating agent report card:', error);
