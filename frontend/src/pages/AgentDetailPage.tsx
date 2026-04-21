@@ -197,6 +197,10 @@ export default function AgentDetailPage() {
     .filter((ticket) => isResolvedStatus(ticket.TICKET_STATUS))
     .map((ticket) => String(ticket.TICKET_ID));
 
+  // Include sample pick IDs in score queries — picks may include non-resolved tickets
+  const sampleTicketIdsForQuery = (picksData?.picks || []).map((p: any) => String(p.ticketId));
+  const scoreQueryIds = [...new Set([...relevantTicketIds, ...sampleTicketIdsForQuery])];
+
   const { data: reviewsData } = useQuery({
     queryKey: ['reviews', relevantTicketIds.join(',')],
     queryFn: () => analysisApi.getReviews(relevantTicketIds),
@@ -206,16 +210,14 @@ export default function AgentDetailPage() {
   const reviews: Record<string, QAReview> = reviewsData?.data?.reviews || {};
 
   const { data: scoresData } = useQuery({
-    queryKey: ['cached-scores', relevantTicketIds.join(',')],
-    queryFn: () => analysisApi.getCachedScores(relevantTicketIds),
-    enabled: relevantTicketIds.length > 0,
+    queryKey: ['cached-scores', scoreQueryIds.join(',')],
+    queryFn: () => analysisApi.getCachedScores(scoreQueryIds),
+    enabled: scoreQueryIds.length > 0,
     staleTime: 1000 * 10,
     refetchInterval: auditStatusData?.inProgress ? 3000 : false,
   });
   const cachedScores: Record<string, ScoreEntry> = scoresData?.data?.scores || {};
   const fallbackIds: Set<string> = new Set(scoresData?.data?.fallbackIds || []);
-
-  const sampleTicketIdsForQuery = (picksData?.picks || []).map((p: any) => String(p.ticketId));
 
   const { data: insightsData } = useQuery({
     queryKey: ['agent-insights', decodedEmail, date, dateMode, sampleTicketIdsForQuery.join(',')],
@@ -299,9 +301,9 @@ export default function AgentDetailPage() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode, decodedEmail] }),
         queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode, decodedEmail] }),
-        queryClient.invalidateQueries({ queryKey: ['cached-scores', relevantTicketIds.join(',')] }),
-        queryClient.invalidateQueries({ queryKey: ['reviews', relevantTicketIds.join(',')] }),
-        queryClient.invalidateQueries({ queryKey: ['agent-insights', decodedEmail, date, dateMode] }),
+        queryClient.invalidateQueries({ queryKey: ['cached-scores'] }),
+        queryClient.invalidateQueries({ queryKey: ['reviews'] }),
+        queryClient.invalidateQueries({ queryKey: ['agent-insights'] }),
       ]);
     },
   });

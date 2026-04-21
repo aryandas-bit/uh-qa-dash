@@ -520,9 +520,11 @@ async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyP
         geminiResultMap.set(pick.ticketId, { analysis, issueSignature, ticket });
 
         // Save QA score immediately so it's visible before Groq stage completes
-        saveQAScore(pick.ticketId, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
-          console.error('[DailyAudit] Failed to persist QA score:', e)
-        );
+        try {
+          await saveQAScore(pick.ticketId, analysis.qaScore, analysis.summary, analysis.deductions);
+        } catch (e) {
+          console.error('[DailyAudit] Failed to persist QA score:', e);
+        }
 
         // Save audit memory
         if (ticket.VISITOR_EMAIL) {
@@ -588,6 +590,13 @@ async function processAuditBatch(date: string, dateMode: DateMode, picks: DailyP
           isFallback: false,
           analysisPath: triage ? 'gemini+groq' : 'gemini-only',
         };
+        // Re-save QA score here to guarantee it's in qa_scores even if Stage 1 save failed
+        await saveQAScore(
+          pick.ticketId,
+          geminiResult.analysis.qaScore,
+          geminiResult.analysis.summary,
+          geminiResult.analysis.deductions
+        ).catch(e => console.error('[DailyAudit] Stage 2 qa_score save failed:', e));
         await saveTicketAnalysis(pick.ticketId, extendedAnalysis, 'daily_audit');
         await markPickAnalyzed(date, dateMode, pick.ticketId, 'success');
       } else if (triage) {
