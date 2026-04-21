@@ -175,6 +175,25 @@ async function getTicketAnalysisContext(ticketId: string) {
 const router = Router();
 const analysisCache = new NodeCache({ stdTTL: 86400 }); // 24 hour cache for analyses
 
+// GET /api/analysis/llm-status - Runtime LLM configuration status
+router.get('/llm-status', async (_req, res) => {
+  const geminiConfigured = Boolean(process.env.GEMINI_API_KEY?.trim());
+  const groqConfigured = Boolean(process.env.GROQ_API_KEY?.trim());
+
+  return res.json({
+    gemini: {
+      configured: geminiConfigured,
+      model: process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
+    },
+    groq: {
+      configured: groqConfigured,
+      model: process.env.GROQ_MODEL?.trim() || 'llama-3.1-8b-instant',
+    },
+    scoringAvailable: geminiConfigured,
+    checkedAt: new Date().toISOString(),
+  });
+});
+
 // Deduplicate concurrent analysis requests for the same ticket
 const inFlightAnalyses = new Map<string, Promise<any>>();
 

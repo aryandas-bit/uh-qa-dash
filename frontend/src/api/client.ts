@@ -64,6 +64,7 @@ export const ticketsApi = {
 
 export const analysisApi = {
   getSOPs: () => api.get('/analysis/sops'),
+  getLLMStatus: () => api.get('/analysis/llm-status'),
   getTicketAnalysis: (id: string, refresh = false, cacheOnly = false) =>
     api.get(`/analysis/ticket/${id}?refresh=${refresh}&cacheOnly=${cacheOnly}`, { timeout: 120000 }),
   batchAnalyze: (date: string, agentEmail?: string, limit = 20, dateMode: DateMode = 'activity', ticketIds?: string[], forceRefresh = false) =>

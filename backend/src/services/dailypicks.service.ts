@@ -364,6 +364,11 @@ export async function runDailyAudit(
   agentEmail?: string,
   forceReanalysis = false
 ): Promise<AuditProgress> {
+  const geminiApiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!geminiApiKey) {
+    throw new Error('Gemini scoring is unavailable: set GEMINI_API_KEY in backend environment variables.');
+  }
+
   const normalizedAgentEmail = agentEmail ? decodeURIComponent(agentEmail) : undefined;
   const auditKey = getAuditKey(date, dateMode, normalizedAgentEmail);
   if (activeAudits.has(auditKey)) {

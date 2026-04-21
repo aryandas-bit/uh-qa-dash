@@ -145,7 +145,9 @@ router.post('/audit-now', async (req, res) => {
     res.json(payload);
   } catch (error) {
     console.error('Error creating audit-now sample:', error);
-    res.status(500).json({ error: 'Failed to create random audit sample' });
+    const message = error instanceof Error ? error.message : 'Failed to create random audit sample';
+    const statusCode = /gemini|GEMINI_API_KEY/i.test(message) ? 503 : 500;
+    res.status(statusCode).json({ error: message });
   }
 });
 
@@ -225,7 +227,9 @@ router.post('/:email/audit-now', async (req, res) => {
     res.json(payload);
   } catch (error) {
     console.error('Error creating audit-now sample:', error);
-    res.status(500).json({ error: 'Failed to create random audit sample' });
+    const message = error instanceof Error ? error.message : 'Failed to create random audit sample';
+    const statusCode = /gemini|GEMINI_API_KEY/i.test(message) ? 503 : 500;
+    res.status(statusCode).json({ error: message });
   }
 });
 

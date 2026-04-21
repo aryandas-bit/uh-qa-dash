@@ -51,6 +51,19 @@ interface QAReview {
   reviewedAt?: string;
 }
 
+interface LLMStatus {
+  gemini: {
+    configured: boolean;
+    model: string;
+  };
+  groq: {
+    configured: boolean;
+    model: string;
+  };
+  scoringAvailable: boolean;
+  checkedAt: string;
+}
+
 interface AgentDailyPick {
   ticketId: string;
   agentEmail: string;
@@ -240,6 +253,14 @@ export default function AgentDetailPage() {
   });
   const trend = trendData?.data?.trend || [];
 
+  const { data: llmStatusData, isLoading: llmStatusLoading } = useQuery({
+    queryKey: ['llm-status'],
+    queryFn: () => analysisApi.getLLMStatus().then((response) => response.data as LLMStatus),
+    staleTime: 1000 * 60,
+    refetchInterval: 1000 * 60 * 2,
+  });
+  const geminiAvailable = llmStatusData?.gemini?.configured !== false;
+
   const handleDateChange = (newDate: string) => {
     setSearchParams({ date: newDate, dateMode });
     setSelectedDate(newDate);
@@ -293,11 +314,10 @@ export default function AgentDetailPage() {
 
   const auditNowMutation = useMutation({
     mutationFn: async () => {
-      const response = await dailyPicksApi.runAudit(date, dateMode, {
-        agentEmail: decodedEmail,
-        count: 10,
-        randomizeSample: true,
-      });
+      if (!date) {
+        throw new Error('No date selected for audit run');
+      }
+      const response = await agentsApi.auditNow(decodedEmail, date, dateMode, 10);
       return response.data;
     },
     onSuccess: async () => {
@@ -306,12 +326,14 @@ export default function AgentDetailPage() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode, decodedEmail] }),
         queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode, decodedEmail] }),
+        queryClient.invalidateQueries({ queryKey: ['audit-summary'] }),
         queryClient.invalidateQueries({ queryKey: ['cached-scores'] }),
         queryClient.invalidateQueries({ queryKey: ['reviews'] }),
         queryClient.invalidateQueries({ queryKey: ['agent-insights'] }),
       ]);
     },
   });
+  const runAuditsDisabled = auditNowMutation.isPending || !date || !decodedEmail || !geminiAvailable;
 
   const reportCardMutation = useMutation({
     mutationFn: async () => {
@@ -656,9 +678,34 @@ export default function AgentDetailPage() {
               <Layers3 size={18} className="text-uh-purple" />
               New Daily Order
             </h2>
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              {llmStatusLoading ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">
+                  Checking LLM status...
+                </span>
+              ) : geminiAvailable ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-uh-success/10 text-uh-success border border-uh-success/20">
+                  Gemini scoring ready
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-uh-error/10 text-uh-error border border-uh-error/20">
+                  Gemini scoring unavailable
+                </span>
+              )}
+              {!!llmStatusData?.gemini?.model && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600">
+                  {llmStatusData.gemini.model}
+                </span>
+              )}
+            </div>
             <p className="text-sm text-slate-500 mt-1">
               Click "Run Audits" to generate a random 10-ticket sample, score each ticket with Gemini, and refresh AI insights scoped to this sample.
             </p>
+            {!geminiAvailable && !llmStatusLoading && (
+              <p className="text-xs text-uh-error mt-2">
+                Set <code>GEMINI_API_KEY</code> in backend environment variables, then restart/redeploy backend to enable QA scoring.
+              </p>
+            )}
             {auditStatusData?.inProgress && (
               <p className="text-xs text-uh-purple mt-2 flex items-center gap-1.5">
                 <Loader2 size={12} className="animate-spin" />
@@ -669,7 +716,7 @@ export default function AgentDetailPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={() => auditNowMutation.mutate()}
-              disabled={auditNowMutation.isPending}
+              disabled={runAuditsDisabled}
               className="btn-primary flex items-center gap-2 text-sm !px-4 !py-2.5 disabled:opacity-50"
             >
               {auditNowMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
