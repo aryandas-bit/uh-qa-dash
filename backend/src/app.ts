@@ -23,6 +23,25 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Sheets debug — tests credentials and writes a ping row
+app.get('/api/debug/sheets', async (req, res) => {
+  try {
+    const { google } = await import('googleapis');
+    const credJson = process.env.GOOGLE_CREDENTIALS_JSON;
+    if (!credJson) return res.json({ error: 'GOOGLE_CREDENTIALS_JSON not set' });
+    let creds: any;
+    try { creds = JSON.parse(credJson); } catch (e: any) { return res.json({ error: 'JSON.parse failed: ' + e.message }); }
+    const auth = new google.auth.GoogleAuth({ credentials: creds, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+    const sheets = google.sheets({ version: 'v4', auth });
+    const sheetId = process.env.GOOGLE_SHEET_ID;
+    const meta = await sheets.spreadsheets.get({ spreadsheetId: sheetId! });
+    const tabs = meta.data.sheets?.map((s: any) => s.properties.title);
+    res.json({ ok: true, sheetId, tabs, clientEmail: creds.client_email });
+  } catch (e: any) {
+    res.json({ error: e.message });
+  }
+});
+
 // Routes
 app.use('/api/agents', agentsRouter);
 app.use('/api/tickets', ticketsRouter);
