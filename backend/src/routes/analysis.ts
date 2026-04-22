@@ -388,12 +388,11 @@ router.post('/ticket/:id/review', async (req, res) => {
     await saveQAReview(id, status as 'approved' | 'flagged', note, reviewerName);
     const review = await getQAReview(id);
 
-    // Sync to Google Sheets (non-blocking)
     const ticket = await getTicketById(id);
     const scores = await getQAScoresBulk([id]);
     const scoreInfo = scores[id];
 
-    upsertReviewToSheet(id, status, note, reviewerName, {
+    await upsertReviewToSheet(id, status, note, reviewerName, {
       subject: ticket?.SUBJECT,
       agentEmail: ticket?.AGENT_EMAIL,
       csat: ticket?.TICKET_CSAT,
@@ -401,7 +400,7 @@ router.post('/ticket/:id/review', async (req, res) => {
       qaScore: scoreInfo?.qaScore,
       summary: scoreInfo?.summary || undefined,
       deductions: scoreInfo?.deductions?.map(d => `${d.category}: ${d.reason}`).join(' | '),
-    }).catch(err => console.error('[Sheets] Failed to sync review:', err.message));
+    });
 
     res.json({ ticketId: id, review });
   } catch (error) {
