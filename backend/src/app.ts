@@ -9,6 +9,7 @@ import { ticketsRouter } from './routes/tickets.js';
 import { analysisRouter } from './routes/analysis.js';
 import { customersRouter } from './routes/customers.js';
 import { dailyPicksRouter } from './routes/dailypicks.js';
+import { metabaseRouter } from './routes/metabase.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -28,6 +29,7 @@ app.use('/api/tickets', ticketsRouter);
 app.use('/api/analysis', analysisRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/daily-picks', dailyPicksRouter);
+app.use('/api/metabase', metabaseRouter);
 
 // Error handler
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {

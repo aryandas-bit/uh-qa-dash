@@ -1,13 +1,18 @@
 import dotenv from 'dotenv';
 dotenv.config();
 import { createClient } from '@libsql/client';
+import { fetchTicketsFromMetabase, isMetabaseEnabled } from './metabase.service.js';
 
-const mainDbUrl = process.env.TURSO_DB_URL || 'file:./dev.db';
+// When Metabase is configured, use a local SQLite file as the ticket cache
+// so all existing queries work unchanged after sync
+const mainDbUrl = isMetabaseEnabled
+  ? 'file:./metabase_cache.db'
+  : (process.env.TURSO_DB_URL || 'file:./dev.db');
 
-// Main database (defaults to a local dev DB when TURSO_DB_URL is not set)
+// Main database (local cache in Metabase mode, Turso in production)
 const mainDb = createClient({
   url: mainDbUrl,
-  authToken: process.env.TURSO_DB_TOKEN,
+  authToken: isMetabaseEnabled ? undefined : process.env.TURSO_DB_TOKEN,
 });
 
 // Reviews database (writable)
@@ -163,6 +168,14 @@ const initPromise = reviewsDb.execute(`
       PRIMARY KEY (agent_email, date)
     )
   `)
+).then(() =>
+  reviewsDb.execute(`
+    CREATE TABLE IF NOT EXISTS metabase_sync_log (
+      date TEXT PRIMARY KEY,
+      synced_at TEXT NOT NULL,
+      row_count INTEGER NOT NULL DEFAULT 0
+    )
+  `)
 );
 
 export interface DailyPick {
@@ -314,6 +327,7 @@ export async function getStoredTicketAnalysisIds(ticketIds: string[]): Promise<S
 }
 
 export async function getActiveAgentEmails(date: string, dateMode: DateMode = 'activity'): Promise<string[]> {
+  await ensureDateSynced(date);
   await initMainPromise;
   const dateCondition = dateMode === 'initialized' ? 'DATE(INITIALIZED_TIME) = ?' : 'DAY = ?';
   const result = await mainDb.execute({
@@ -324,6 +338,7 @@ export async function getActiveAgentEmails(date: string, dateMode: DateMode = 'a
 }
 
 export async function getAgentTicketIds(agentEmail: string, date: string, dateMode: DateMode = 'activity'): Promise<string[]> {
+  await ensureDateSynced(date);
   await initMainPromise;
   const dateCondition = dateMode === 'initialized' ? 'DATE(INITIALIZED_TIME) = ?' : 'DAY = ?';
   const result = await mainDb.execute({
@@ -351,6 +366,7 @@ export async function getDailyPickCandidates(
   dateMode: DateMode = 'activity',
   agentEmail?: string
 ): Promise<DailyPickCandidate[]> {
+  await ensureDateSynced(date);
   await initMainPromise;
   const dateCondition = dateMode === 'initialized' ? 'DATE(INITIALIZED_TIME) = ?' : 'DAY = ?';
   const hasAgentFilter = Boolean(agentEmail);
@@ -816,6 +832,7 @@ export async function getAvailableDates(): Promise<string[]> {
 // Get agent summary for a specific date (using DISTINCT to avoid duplicates)
 // dateMode: 'activity' = filter by DAY field, 'initialized' = filter by INITIALIZED_TIME date
 export async function getAgentsDailySummary(date: string, dateMode: DateMode = 'activity'): Promise<AgentSummary[]> {
+  await ensureDateSynced(date);
   await initMainPromise;
   const dateCondition = dateMode === 'initialized'
     ? 'DATE(INITIALIZED_TIME) = ?'
@@ -846,6 +863,7 @@ export { normalizeTicketRow };
 // dateMode: 'activity' = filter by DAY field (when ticket had activity/resolved)
 // dateMode: 'initialized' = filter by INITIALIZED_TIME date (when ticket was created)
 export async function getAgentTickets(agentEmail: string, date: string, limit = 100, offset = 0, dateMode: DateMode = 'activity'): Promise<TicketRow[]> {
+  await ensureDateSynced(date);
   await initMainPromise;
   const dateCondition = dateMode === 'initialized'
     ? 'DATE(INITIALIZED_TIME) = ?'
@@ -1407,6 +1425,82 @@ export async function getTicketMessagesBulk(ticketIds: string[]): Promise<Record
     out[String(row.TICKET_ID)] = String(row.messages || '[]');
   });
   return out;
+}
+
+// ── Metabase sync ────────────────────────────────────────────────────────────
+
+export async function isDateSynced(date: string): Promise<boolean> {
+  if (!isMetabaseEnabled) return true;
+  await initPromise;
+  const result = await reviewsDb.execute({
+    sql: 'SELECT date FROM metabase_sync_log WHERE date = ?',
+    args: [date],
+  });
+  return result.rows.length > 0;
+}
+
+export async function syncDateFromMetabase(date: string): Promise<number> {
+  const tickets = await fetchTicketsFromMetabase(date, date);
+  if (tickets.length === 0) {
+    await reviewsDb.execute({
+      sql: 'INSERT OR REPLACE INTO metabase_sync_log (date, synced_at, row_count) VALUES (?, ?, ?)',
+      args: [date, new Date().toISOString(), 0],
+    });
+    return 0;
+  }
+
+  await initMainPromise;
+
+  // Clear stale data for this date then insert fresh rows in chunks
+  await mainDb.execute({ sql: 'DELETE FROM raw_tickets WHERE DAY = ?', args: [date] });
+
+  const chunkSize = 100;
+  for (let i = 0; i < tickets.length; i += chunkSize) {
+    const chunk = tickets.slice(i, i + chunkSize);
+    await mainDb.batch(
+      chunk.map(t => ({
+        sql: `INSERT INTO raw_tickets
+              (TICKET_ID, VISITOR_NAME, VISITOR_EMAIL, SUBJECT, TAGS, TICKET_STATUS,
+               PRIORITY, AGENT_EMAIL, RESOLVED_BY, FIRST_RESPONSE_DURATION_SECONDS,
+               AVG_RESPONSE_TIME_SECONDS, SPENT_TIME_SECONDS, TICKET_CSAT, AGENT_RATING,
+               MESSAGES_JSON, MESSAGE_COUNT, USER_MESSAGE_COUNT, AGENT_MESSAGE_COUNT,
+               DAY, GROUP_NAME, INITIALIZED_TIME, RESOLVED_TIME)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        args: [
+          t.TICKET_ID, t.VISITOR_NAME || null, t.VISITOR_EMAIL || null, t.SUBJECT || null,
+          t.TAGS || null, t.TICKET_STATUS || null, t.PRIORITY || null, t.AGENT_EMAIL || null,
+          t.RESOLVED_BY || null, t.FIRST_RESPONSE_DURATION_SECONDS || null,
+          t.AVG_RESPONSE_TIME_SECONDS || null, t.SPENT_TIME_SECONDS || null,
+          t.TICKET_CSAT || null, t.AGENT_RATING || null, t.MESSAGES_JSON || null,
+          t.MESSAGE_COUNT || null, t.USER_MESSAGE_COUNT || null, t.AGENT_MESSAGE_COUNT || null,
+          t.DAY || null, t.GROUP_NAME || null, t.INITIALIZED_TIME || null, t.RESOLVED_TIME || null,
+        ],
+      })),
+      'write',
+    );
+  }
+
+  await reviewsDb.execute({
+    sql: 'INSERT OR REPLACE INTO metabase_sync_log (date, synced_at, row_count) VALUES (?, ?, ?)',
+    args: [date, new Date().toISOString(), tickets.length],
+  });
+
+  console.log(`[Metabase] Synced ${tickets.length} tickets for ${date}`);
+  return tickets.length;
+}
+
+export async function ensureDateSynced(date: string): Promise<void> {
+  if (!isMetabaseEnabled) return;
+  const synced = await isDateSynced(date);
+  if (!synced) await syncDateFromMetabase(date);
+}
+
+export async function getSyncLog(): Promise<Array<{ date: string; syncedAt: string; rowCount: number }>> {
+  await initPromise;
+  const result = await reviewsDb.execute(
+    'SELECT date, synced_at as syncedAt, row_count as rowCount FROM metabase_sync_log ORDER BY date DESC'
+  );
+  return result.rows as unknown as Array<{ date: string; syncedAt: string; rowCount: number }>;
 }
 
 export { mainDb as db };
