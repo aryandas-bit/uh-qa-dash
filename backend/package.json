@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "node --import tsx/esm src/app.ts",
     "build": "tsc && cp -r src/data dist/",
-    "start": "node dist/app.js"
+    "start": "node dist/app.js",
+    "sync": "node --import tsx/esm src/scripts/sync-metabase.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
