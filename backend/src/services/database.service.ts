@@ -3,16 +3,12 @@ dotenv.config();
 import { createClient } from '@libsql/client';
 import { fetchTicketsFromMetabase, isMetabaseEnabled } from './metabase.service.js';
 
-// When Metabase is configured, use a local SQLite file as the ticket cache
-// so all existing queries work unchanged after sync
-const mainDbUrl = isMetabaseEnabled
-  ? 'file:./metabase_cache.db'
-  : (process.env.TURSO_DB_URL || 'file:./dev.db');
+// Main database — always Turso (or local dev.db); Metabase syncs INTO this DB
+const mainDbUrl = process.env.TURSO_DB_URL || 'file:./dev.db';
 
-// Main database (local cache in Metabase mode, Turso in production)
 const mainDb = createClient({
   url: mainDbUrl,
-  authToken: isMetabaseEnabled ? undefined : process.env.TURSO_DB_TOKEN,
+  authToken: process.env.TURSO_DB_TOKEN,
 });
 
 // Reviews database (writable)
@@ -27,34 +23,33 @@ mainDb.execute(`CREATE INDEX IF NOT EXISTS idx_raw_tickets_agent ON raw_tickets(
 mainDb.execute(`CREATE INDEX IF NOT EXISTS idx_raw_tickets_init ON raw_tickets(INITIALIZED_TIME)`).catch(() => {});
 mainDb.execute(`CREATE INDEX IF NOT EXISTS idx_raw_tickets_agent_day ON raw_tickets(AGENT_EMAIL, DAY)`).catch(() => {});
 
-const initMainPromise = mainDbUrl.startsWith('file:')
-  ? mainDb.execute(`
-      CREATE TABLE IF NOT EXISTS raw_tickets (
-        TICKET_ID TEXT,
-        VISITOR_NAME TEXT,
-        VISITOR_EMAIL TEXT,
-        SUBJECT TEXT,
-        TAGS TEXT,
-        TICKET_STATUS TEXT,
-        PRIORITY TEXT,
-        AGENT_EMAIL TEXT,
-        RESOLVED_BY TEXT,
-        FIRST_RESPONSE_DURATION_SECONDS INTEGER,
-        AVG_RESPONSE_TIME_SECONDS INTEGER,
-        SPENT_TIME_SECONDS INTEGER,
-        TICKET_CSAT INTEGER,
-        AGENT_RATING INTEGER,
-        MESSAGES_JSON TEXT,
-        MESSAGE_COUNT INTEGER,
-        USER_MESSAGE_COUNT INTEGER,
-        AGENT_MESSAGE_COUNT INTEGER,
-        DAY TEXT,
-        GROUP_NAME TEXT,
-        INITIALIZED_TIME TEXT,
-        RESOLVED_TIME TEXT
-      )
-    `)
-  : Promise.resolve();
+// Create raw_tickets if it doesn't exist — safe on both local SQLite and Turso
+const initMainPromise = mainDb.execute(`
+    CREATE TABLE IF NOT EXISTS raw_tickets (
+      TICKET_ID TEXT,
+      VISITOR_NAME TEXT,
+      VISITOR_EMAIL TEXT,
+      SUBJECT TEXT,
+      TAGS TEXT,
+      TICKET_STATUS TEXT,
+      PRIORITY TEXT,
+      AGENT_EMAIL TEXT,
+      RESOLVED_BY TEXT,
+      FIRST_RESPONSE_DURATION_SECONDS INTEGER,
+      AVG_RESPONSE_TIME_SECONDS INTEGER,
+      SPENT_TIME_SECONDS INTEGER,
+      TICKET_CSAT INTEGER,
+      AGENT_RATING INTEGER,
+      MESSAGES_JSON TEXT,
+      MESSAGE_COUNT INTEGER,
+      USER_MESSAGE_COUNT INTEGER,
+      AGENT_MESSAGE_COUNT INTEGER,
+      DAY TEXT,
+      GROUP_NAME TEXT,
+      INITIALIZED_TIME TEXT,
+      RESOLVED_TIME TEXT
+    )
+  `).catch(() => { /* table already exists */ });
 
 // Initialize reviews table once, share this promise across all callers
 const initPromise = reviewsDb.execute(`
