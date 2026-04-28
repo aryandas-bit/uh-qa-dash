@@ -11,7 +11,6 @@ interface DatePickerProps {
 export default function DatePicker({
   selectedDate,
   onDateChange,
-  availableDates: _availableDates,
 }: DatePickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const today = startOfDay(new Date());

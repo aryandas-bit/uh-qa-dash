@@ -5,6 +5,7 @@ import { AlertTriangle, TrendingDown, ExternalLink } from 'lucide-react';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import ScoreBadge from '../components/common/ScoreBadge';
 import { agentsApi } from '../api/client';
+import type { Defaulter } from '../types';
 
 export default function DefaultersPage() {
   const [minIssues, setMinIssues] = useState(3);
@@ -15,7 +16,7 @@ export default function DefaultersPage() {
     queryFn: () => agentsApi.getDefaulters(minIssues, days),
   });
 
-  const defaulters = data?.data?.defaulters || [];
+  const defaulters: Defaulter[] = data?.data?.defaulters || [];
 
   return (
     <div className="p-8">
@@ -75,7 +76,7 @@ export default function DefaultersPage() {
         <div className="card">
           <p className="text-slate-500 text-sm">Total Low CSAT Tickets</p>
           <p className="text-3xl font-bold mt-1">
-            {defaulters.reduce((sum: number, d: any) => sum + d.lowCsatCount, 0)}
+            {defaulters.reduce((sum, d) => sum + d.lowCsatCount, 0)}
           </p>
         </div>
         <div className="card">
@@ -83,7 +84,7 @@ export default function DefaultersPage() {
           <p className="text-3xl font-bold mt-1">
             {defaulters.length > 0
               ? (
-                  defaulters.reduce((sum: number, d: any) => sum + Number(d.lowCsatPercent || 0), 0) /
+                  defaulters.reduce((sum, d) => sum + Number(d.lowCsatPercent || 0), 0) /
                   defaulters.length
                 ).toFixed(1)
               : 0}
@@ -122,7 +123,7 @@ export default function DefaultersPage() {
                 </tr>
               </thead>
               <tbody>
-                {defaulters.map((defaulter: any) => (
+                {defaulters.map((defaulter) => (
                   <tr
                     key={defaulter.agentEmail}
                     className="border-b border-slate-100 hover:bg-slate-50 transition-colors"

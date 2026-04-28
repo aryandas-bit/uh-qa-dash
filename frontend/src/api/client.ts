@@ -87,6 +87,35 @@ export const customersApi = {
     api.get(`/customers/${encodeURIComponent(email)}/history?limit=${limit}`),
 };
 
+export const auditorsApi = {
+  list: () => api.get('/auditors/list'),
+  getAssignments: (date: string, dateMode: DateMode = 'activity') =>
+    api.get(`/auditors/assignments?date=${date}&dateMode=${dateMode}`),
+  claim: (date: string, dateMode: DateMode, agentEmail: string, auditor: string) =>
+    api.post('/auditors/claim', { date, dateMode, agentEmail, auditor }),
+  release: (date: string, dateMode: DateMode, agentEmail: string, auditor: string) =>
+    api.post('/auditors/release', { date, dateMode, agentEmail, auditor }),
+  getPushedScores: (date: string, dateMode: DateMode = 'activity') =>
+    api.get(`/auditors/pushed-scores?date=${date}&dateMode=${dateMode}`),
+  pushScores: (date: string, dateMode: DateMode, agentEmail: string, auditor: string) =>
+    api.post('/auditors/push-scores', { date, dateMode, agentEmail, auditor }),
+  getTeamProgress: (date: string, dateMode: DateMode = 'activity') =>
+    api.get(`/auditors/team-progress?date=${date}&dateMode=${dateMode}`),
+  getMyStats: (date: string, dateMode: DateMode, auditor: string) =>
+    api.get(`/auditors/my-stats?date=${date}&dateMode=${dateMode}&auditor=${encodeURIComponent(auditor)}`),
+};
+
+export const reevaluationsApi = {
+  list: (status?: string) =>
+    api.get(`/reevaluations${status ? `?status=${status}` : ''}`),
+  create: (input: { ticketId: string; agentEmail?: string; reason?: string; requestedBy?: string; originalScore?: number | null }) =>
+    api.post('/reevaluations', input),
+  claim: (id: number, auditor: string) =>
+    api.post(`/reevaluations/${id}/claim`, { auditor }),
+  resolve: (id: number, auditor: string, status: 'resolved' | 'rejected', note?: string, newScore?: number | null) =>
+    api.post(`/reevaluations/${id}/resolve`, { auditor, status, note, newScore }),
+};
+
 export const dailyPicksApi = {
   getPicks: (
     date: string,

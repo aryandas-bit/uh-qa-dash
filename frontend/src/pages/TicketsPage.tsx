@@ -10,6 +10,7 @@ import { getAvatarColor, getAvatarInitial } from '../utils/avatarColors';
 import AgentTrendSparkline from '../components/agent/AgentTrendSparkline';
 import { useDateStore } from '../store/dateStore';
 import { useEffect } from 'react';
+import type { AgentSummary } from '../types';
 
 export default function TicketsPage() {
   const navigate = useNavigate();
@@ -54,7 +55,7 @@ export default function TicketsPage() {
     staleTime: 1000 * 60 * 5,
   });
 
-  const agents: any[] = agentsData?.data?.agents || [];
+  const agents: AgentSummary[] = agentsData?.data?.agents || [];
   const agentEmails = agents.map((agent) => agent.agentEmail).filter(Boolean);
 
   const { data: trendMapData } = useQuery({
@@ -160,7 +161,7 @@ export default function TicketsPage() {
 }
 
 function AgentCardRow({ agent, trend, onClick }: { 
-  agent: any, 
+  agent: AgentSummary, 
   trend: Array<{ date: string; avgScore: number }>,
   onClick: () => void 
 }) {

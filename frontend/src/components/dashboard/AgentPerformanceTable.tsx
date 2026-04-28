@@ -43,7 +43,7 @@ export default function AgentPerformanceTable({
     return `${(seconds / 3600).toFixed(1)}h`;
   };
 
-  const SortIcon = ({ field }: { field: SortField }) => {
+  const renderSortIcon = (field: SortField) => {
     if (sortField !== field) return null;
     return sortDirection === 'asc' ? (
       <ChevronUp size={16} />
@@ -85,7 +85,7 @@ export default function AgentPerformanceTable({
               >
                 <div className="flex items-center gap-1">
                   Tickets
-                  <SortIcon field="totalTickets" />
+                  {renderSortIcon('totalTickets')}
                 </div>
               </th>
               <th
@@ -94,7 +94,7 @@ export default function AgentPerformanceTable({
               >
                 <div className="flex items-center gap-1">
                   Avg CSAT
-                  <SortIcon field="avgCsat" />
+                  {renderSortIcon('avgCsat')}
                 </div>
               </th>
               <th
@@ -103,7 +103,7 @@ export default function AgentPerformanceTable({
               >
                 <div className="flex items-center gap-1">
                   Low CSAT
-                  <SortIcon field="lowCsatCount" />
+                  {renderSortIcon('lowCsatCount')}
                 </div>
               </th>
               <th
@@ -112,7 +112,7 @@ export default function AgentPerformanceTable({
               >
                 <div className="flex items-center gap-1">
                   Avg Response
-                  <SortIcon field="avgResponseTime" />
+                  {renderSortIcon('avgResponseTime')}
                 </div>
               </th>
               <th className="pb-4 pl-4">Actions</th>
