@@ -15,11 +15,14 @@ import {
   Layers3,
   Loader2,
   Mail,
+  Minus,
+  Plus,
   Skull,
   Sparkles,
   ThumbsUp,
   Ticket,
   TrendingDown,
+  UserCheck,
 } from 'lucide-react';
 import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -40,6 +43,8 @@ interface AgentTicketRow {
 
 interface ScoreEntry {
   qaScore: number;
+  originalScore: number;
+  hasOverride: boolean;
   summary: string | null;
   deductions: Array<{ category: string; points: number; reason: string }>;
 }
@@ -152,6 +157,8 @@ export default function AgentDetailPage() {
   const [reportCard, setReportCard] = useState<ReportCard | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
   const [insightsEnabled, setInsightsEnabled] = useState(false);
+  const [adjusterName, setAdjusterName] = useState('');
+  const [adjustingTicketId, setAdjustingTicketId] = useState<string | null>(null);
   const { selectedDate, setSelectedDate, dateMode: storeDateMode, setDateMode: setStoreDateMode } = useDateStore();
 
   const { data: datesData } = useQuery({
@@ -347,6 +354,18 @@ export default function AgentDetailPage() {
     },
     onSuccess: (data) => {
       setReportCard(data);
+    },
+  });
+
+  const adjustScoreMutation = useMutation({
+    mutationFn: async ({ ticketId, newScore }: { ticketId: string; newScore: number }) => {
+      const response = await analysisApi.adjustScore(ticketId, newScore, adjusterName.trim());
+      return response.data;
+    },
+    onMutate: ({ ticketId }) => setAdjustingTicketId(ticketId),
+    onSettled: async () => {
+      setAdjustingTicketId(null);
+      await queryClient.invalidateQueries({ queryKey: ['cached-scores'] });
     },
   });
 
@@ -889,6 +908,23 @@ export default function AgentDetailPage() {
             </div>
           </div>
 
+          <div className="flex items-center gap-3 mb-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
+            <UserCheck size={14} className="text-uh-purple shrink-0" />
+            <label className="text-xs text-slate-500 whitespace-nowrap font-medium">Reviewer name:</label>
+            <input
+              type="text"
+              value={adjusterName}
+              onChange={(e) => setAdjusterName(e.target.value)}
+              placeholder="Enter your name to enable score adjustments"
+              className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 flex-1 max-w-xs focus:outline-none focus:ring-1 focus:ring-uh-purple/50"
+            />
+            {adjusterName.trim() ? (
+              <span className="text-[10px] text-uh-purple font-medium">± Use +/− buttons in Final Score column to adjust</span>
+            ) : (
+              <span className="text-[10px] text-slate-400">Score adjustments are saved and synced to the sheet</span>
+            )}
+          </div>
+
           <div className="overflow-x-auto rounded-xl border border-slate-200">
             <table className="w-full text-xs min-w-[1300px] border-collapse">
               <thead>
@@ -917,7 +953,12 @@ export default function AgentDetailPage() {
                     ? 'Low CSAT'
                     : 'NA';
                   const feedback = cachedScores[ticketId]?.summary || 'NA';
-                  const score = item.qaScore;
+                  // Use the effective score from cachedScores (applies score_override when present)
+                  const effectiveScore = cachedScores[ticketId]?.qaScore ?? item.qaScore;
+                  const originalScore = cachedScores[ticketId]?.originalScore;
+                  const hasOverride = cachedScores[ticketId]?.hasOverride ?? false;
+                  const isAdjusting = adjustingTicketId === ticketId && adjustScoreMutation.isPending;
+                  const canAdjust = adjusterName.trim().length > 0 && effectiveScore != null;
                   const month = date
                     ? new Date(`${date}T00:00:00`).toLocaleString('en-US', { month: 'short' })
                     : 'NA';
@@ -938,8 +979,55 @@ export default function AgentDetailPage() {
                       <td className="px-3 py-2 border border-slate-200 text-center">{dsatReason}</td>
                       <td className="px-3 py-2 border border-slate-200 text-center">{getDeductionReason(ticketId, 'fatal')}</td>
                       <td className="px-3 py-2 border border-slate-200 max-w-[280px] truncate" title={feedback}>{feedback}</td>
-                      <td className="px-3 py-2 border border-slate-200 text-center">{formatScoreCell(score)}</td>
-                      <td className="px-3 py-2 border border-slate-200 text-center font-semibold">{formatScoreCell(score)}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">
+                        {effectiveScore != null ? `${Math.round(effectiveScore)} / 100` : '—'}
+                      </td>
+                      <td className="px-3 py-2 border border-slate-200 text-center font-semibold">
+                        {canAdjust ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                const next = Math.max(0, Math.round(effectiveScore!) - 1);
+                                adjustScoreMutation.mutate({ ticketId, newScore: next });
+                              }}
+                              disabled={isAdjusting || effectiveScore === 0}
+                              className="w-5 h-5 rounded bg-slate-200 hover:bg-uh-error/20 text-slate-600 flex items-center justify-center disabled:opacity-40 transition-colors"
+                              title="Decrease score by 1"
+                            >
+                              <Minus size={10} />
+                            </button>
+                            <div className="min-w-[52px] text-center">
+                              {isAdjusting ? (
+                                <Loader2 size={12} className="animate-spin inline text-uh-purple" />
+                              ) : (
+                                <>
+                                  <span className={hasOverride ? 'text-uh-warning' : ''}>{Math.round(effectiveScore!)} / 100</span>
+                                  {hasOverride && originalScore != null && (
+                                    <div className="text-[9px] text-slate-400 leading-tight font-normal">
+                                      orig: {Math.round(originalScore)}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                const next = Math.min(100, Math.round(effectiveScore!) + 1);
+                                adjustScoreMutation.mutate({ ticketId, newScore: next });
+                              }}
+                              disabled={isAdjusting || effectiveScore === 100}
+                              className="w-5 h-5 rounded bg-slate-200 hover:bg-uh-success/20 text-slate-600 flex items-center justify-center disabled:opacity-40 transition-colors"
+                              title="Increase score by 1"
+                            >
+                              <Plus size={10} />
+                            </button>
+                          </div>
+                        ) : (
+                          effectiveScore != null ? `${Math.round(effectiveScore)} / 100` : '—'
+                        )}
+                      </td>
                       <td className="px-3 py-2 border border-slate-200 max-w-[260px] truncate" title={item.reviewNote || ''}>
                         {item.reviewNote || 'NA'}
                       </td>

@@ -245,8 +245,9 @@ router.get('/:email/report-card', async (req, res) => {
       return res.status(400).json({ error: 'Date parameter is required' });
     }
 
+    // skipSync=true: treat the dump (raw_tickets already in DB) as source of truth — no Metabase auto-pull
     const [ticketResult, pickResult] = await Promise.all([
-      getAgentTickets(decodedEmail, date, 500, 0, dateMode),
+      getAgentTickets(decodedEmail, date, 500, 0, dateMode, true),
       getDailyPicks(date, 10, dateMode, { agentEmail: decodedEmail, autoGenerate: false }),
     ]);
 

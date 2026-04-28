@@ -61,9 +61,9 @@ const initPromise = reviewsDb.execute(`
     reviewed_at TEXT NOT NULL
   )
 `).then(() =>
-  reviewsDb.execute(`ALTER TABLE qa_reviews ADD COLUMN reviewer_name TEXT`).catch(() => {
-    /* column already exists */
-  })
+  reviewsDb.execute(`ALTER TABLE qa_reviews ADD COLUMN reviewer_name TEXT`).catch(() => {})
+).then(() =>
+  reviewsDb.execute(`ALTER TABLE qa_reviews ADD COLUMN score_override INTEGER`).catch(() => {})
 ).then(() =>
   reviewsDb.execute(`
     CREATE TABLE IF NOT EXISTS audit_memories (
@@ -171,6 +171,21 @@ const initPromise = reviewsDb.execute(`
       row_count INTEGER NOT NULL DEFAULT 0
     )
   `)
+).then(() =>
+  reviewsDb.execute(`
+    CREATE TABLE IF NOT EXISTS score_adjustments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticket_id TEXT NOT NULL,
+      original_score REAL NOT NULL,
+      adjusted_score REAL NOT NULL,
+      adjustment_delta REAL NOT NULL,
+      adjusted_by TEXT NOT NULL,
+      adjusted_at TEXT NOT NULL,
+      adjustment_reason TEXT
+    )
+  `)
+).then(() =>
+  reviewsDb.execute(`CREATE INDEX IF NOT EXISTS idx_score_adjustments_ticket ON score_adjustments(ticket_id)`).catch(() => {})
 );
 
 export interface DailyPick {
@@ -472,6 +487,18 @@ export interface QAReview {
   note: string | null;
   reviewerName: string | null;
   reviewedAt: string;
+  scoreOverride: number | null;
+}
+
+export interface ScoreAdjustment {
+  id: number;
+  ticketId: string;
+  originalScore: number;
+  adjustedScore: number;
+  adjustmentDelta: number;
+  adjustedBy: string;
+  adjustedAt: string;
+  adjustmentReason: string | null;
 }
 
 export interface AuditMemoryRecord {
@@ -530,11 +557,56 @@ export async function saveQAReview(ticketId: string, status: 'approved' | 'flagg
 export async function getQAReview(ticketId: string): Promise<QAReview | undefined> {
   await initPromise;
   const result = await reviewsDb.execute({
-    sql: `SELECT status, note, reviewer_name as reviewerName, reviewed_at as reviewedAt
+    sql: `SELECT status, note, reviewer_name as reviewerName, reviewed_at as reviewedAt,
+                 score_override as scoreOverride
           FROM qa_reviews WHERE ticket_id = ?`,
     args: [ticketId],
   });
   return result.rows[0] as unknown as QAReview | undefined;
+}
+
+export async function saveScoreOverride(
+  ticketId: string,
+  adjustedScore: number,
+  adjustedBy: string,
+  adjustmentReason?: string,
+): Promise<{ originalScore: number | null }> {
+  await initPromise;
+
+  const scoreResult = await reviewsDb.execute({
+    sql: 'SELECT qa_score FROM qa_scores WHERE ticket_id = ?',
+    args: [ticketId],
+  });
+  const originalScore = scoreResult.rows[0] ? Number((scoreResult.rows[0] as any).qa_score) : null;
+
+  await reviewsDb.execute({
+    sql: `UPDATE qa_reviews SET score_override = ? WHERE ticket_id = ?`,
+    args: [adjustedScore, ticketId],
+  });
+
+  if (originalScore !== null) {
+    await reviewsDb.execute({
+      sql: `INSERT INTO score_adjustments (ticket_id, original_score, adjusted_score, adjustment_delta, adjusted_by, adjusted_at, adjustment_reason)
+            VALUES (?, ?, ?, ?, ?, datetime('now'), ?)`,
+      args: [ticketId, originalScore, adjustedScore, adjustedScore - originalScore, adjustedBy, adjustmentReason || null],
+    });
+  }
+
+  return { originalScore };
+}
+
+export async function getScoreAdjustmentHistory(ticketId: string): Promise<ScoreAdjustment[]> {
+  await initPromise;
+  const result = await reviewsDb.execute({
+    sql: `SELECT id, ticket_id as ticketId, original_score as originalScore, adjusted_score as adjustedScore,
+                 adjustment_delta as adjustmentDelta, adjusted_by as adjustedBy, adjusted_at as adjustedAt,
+                 adjustment_reason as adjustmentReason
+          FROM score_adjustments
+          WHERE ticket_id = ?
+          ORDER BY adjusted_at DESC`,
+    args: [ticketId],
+  });
+  return result.rows as unknown as ScoreAdjustment[];
 }
 
 export async function deleteQAReview(ticketId: string): Promise<void> {
@@ -550,7 +622,8 @@ export async function getQAReviewsBulk(ticketIds: string[]): Promise<Record<stri
   await initPromise;
   const placeholders = ticketIds.map(() => '?').join(',');
   const result = await reviewsDb.execute({
-    sql: `SELECT ticket_id, status, note, reviewer_name as reviewerName, reviewed_at as reviewedAt
+    sql: `SELECT ticket_id, status, note, reviewer_name as reviewerName, reviewed_at as reviewedAt,
+                 score_override as scoreOverride
           FROM qa_reviews
           WHERE ticket_id IN (${placeholders})`,
     args: ticketIds,
@@ -558,7 +631,13 @@ export async function getQAReviewsBulk(ticketIds: string[]): Promise<Record<stri
   const rows = result.rows as unknown as Array<QAReview & { ticket_id: string }>;
   const out: Record<string, QAReview> = {};
   rows.forEach(row => {
-    out[row.ticket_id] = { status: row.status, note: row.note, reviewerName: row.reviewerName, reviewedAt: row.reviewedAt };
+    out[row.ticket_id] = {
+      status: row.status,
+      note: row.note,
+      reviewerName: row.reviewerName,
+      reviewedAt: row.reviewedAt,
+      scoreOverride: row.scoreOverride ?? null,
+    };
   });
   return out;
 }
@@ -857,8 +936,8 @@ export { normalizeTicketRow };
 // Get tickets for a specific agent on a specific date (deduplicated by TICKET_ID)
 // dateMode: 'activity' = filter by DAY field (when ticket had activity/resolved)
 // dateMode: 'initialized' = filter by INITIALIZED_TIME date (when ticket was created)
-export async function getAgentTickets(agentEmail: string, date: string, limit = 100, offset = 0, dateMode: DateMode = 'activity'): Promise<TicketRow[]> {
-  await ensureDateSynced(date);
+export async function getAgentTickets(agentEmail: string, date: string, limit = 100, offset = 0, dateMode: DateMode = 'activity', skipSync = false): Promise<TicketRow[]> {
+  if (!skipSync) await ensureDateSynced(date);
   await initMainPromise;
   const dateCondition = dateMode === 'initialized'
     ? 'DATE(INITIALIZED_TIME) = ?'
@@ -1338,26 +1417,37 @@ export async function getAgentsQATrends(
 // Bulk-fetch persisted QA scores for a list of ticket IDs
 export async function getQAScoresBulk(
   ticketIds: string[]
-): Promise<Record<string, { qaScore: number; summary: string | null; deductions: QADeduction[] }>> {
+): Promise<Record<string, { qaScore: number; originalScore: number; hasOverride: boolean; summary: string | null; deductions: QADeduction[] }>> {
   if (ticketIds.length === 0) return {};
   await initPromise;
   const placeholders = ticketIds.map(() => '?').join(',');
+  // Apply score_override from qa_reviews when present — dump-based scores are the source of truth
   const result = await reviewsDb.execute({
-    sql: `SELECT ticket_id, qa_score as qaScore, summary, deductions_json
-          FROM qa_scores
-          WHERE ticket_id IN (${placeholders})`,
+    sql: `SELECT qs.ticket_id,
+                 qs.qa_score as originalScore,
+                 COALESCE(qr.score_override, qs.qa_score) as qaScore,
+                 CASE WHEN qr.score_override IS NOT NULL THEN 1 ELSE 0 END as hasOverride,
+                 qs.summary,
+                 qs.deductions_json
+          FROM qa_scores qs
+          LEFT JOIN qa_reviews qr ON qr.ticket_id = qs.ticket_id
+          WHERE qs.ticket_id IN (${placeholders})`,
     args: ticketIds,
   });
   const rows = result.rows as unknown as Array<{
     ticket_id: string;
+    originalScore: number;
     qaScore: number;
+    hasOverride: number;
     summary: string | null;
     deductions_json: string | null;
   }>;
-  const out: Record<string, { qaScore: number; summary: string | null; deductions: QADeduction[] }> = {};
+  const out: Record<string, { qaScore: number; originalScore: number; hasOverride: boolean; summary: string | null; deductions: QADeduction[] }> = {};
   rows.forEach(row => {
     out[row.ticket_id] = {
-      qaScore: row.qaScore,
+      qaScore: Number(row.qaScore),
+      originalScore: Number(row.originalScore),
+      hasOverride: Boolean(row.hasOverride),
       summary: row.summary,
       deductions: row.deductions_json ? JSON.parse(row.deductions_json) : [],
     };

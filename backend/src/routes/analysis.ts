@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { analyzeTicket, batchAnalyze, CustomerTicketHistory } from '../services/gemini.service.js';
 import { analyzeHybrid } from '../services/analysis-hybrid.service.js';
-import { getTicketById, getFlaggedTickets, getAgentTickets, getTicketsByIds, getCustomerHistory, getRelevantAuditMemories, saveAuditMemory, AuditMemoryRecord, TicketRow, saveQAReview, getQAReview, deleteQAReview, getQAReviewsBulk, getAllQAReviews, getAllQAReviewsWithTickets, saveTicketAnalysis, getStoredTicketAnalysis, saveQAScore, getQAScoresBulk } from '../services/database.service.js';
+import { getTicketById, getFlaggedTickets, getAgentTickets, getTicketsByIds, getCustomerHistory, getRelevantAuditMemories, saveAuditMemory, AuditMemoryRecord, TicketRow, saveQAReview, getQAReview, deleteQAReview, getQAReviewsBulk, getAllQAReviews, getAllQAReviewsWithTickets, saveTicketAnalysis, getStoredTicketAnalysis, saveQAScore, getQAScoresBulk, saveScoreOverride, getScoreAdjustmentHistory } from '../services/database.service.js';
 import { upsertReviewToSheet, deleteReviewFromSheet } from '../services/sheets.service.js';
 import { getAllSOPs, getSOPCategories } from '../services/sop.service.js';
 import NodeCache from 'node-cache';
@@ -422,6 +422,62 @@ router.delete('/ticket/:id/review', async (req, res) => {
   }
 });
 
+// PATCH /api/analysis/ticket/:id/score - Manually adjust the QA score (requires adjustedBy)
+router.patch('/ticket/:id/score', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { scoreOverride, adjustedBy, adjustmentReason } = req.body;
+
+    if (!adjustedBy || typeof adjustedBy !== 'string' || !adjustedBy.trim()) {
+      return res.status(403).json({ error: 'adjustedBy is required — only authorized reviewers can adjust scores' });
+    }
+
+    if (scoreOverride === undefined || scoreOverride === null) {
+      return res.status(400).json({ error: 'scoreOverride required' });
+    }
+    const score = Math.min(100, Math.max(0, Math.round(Number(scoreOverride))));
+    if (isNaN(score)) return res.status(400).json({ error: 'scoreOverride must be a number' });
+
+    const { originalScore } = await saveScoreOverride(id, score, adjustedBy.trim(), adjustmentReason);
+    const review = await getQAReview(id);
+
+    // Re-sync to sheet with updated score whenever there is an existing review
+    if (review) {
+      const ticket = await getTicketById(id);
+      const scores = await getQAScoresBulk([id]);
+      const scoreInfo = scores[id];
+      upsertReviewToSheet(id, review.status as 'approved' | 'flagged', review.note ?? undefined, review.reviewerName ?? undefined, {
+        subject: ticket?.SUBJECT,
+        agentEmail: ticket?.AGENT_EMAIL,
+        csat: ticket?.TICKET_CSAT,
+        day: ticket?.DAY,
+        qaScore: score,
+        summary: scoreInfo?.summary || undefined,
+        deductions: scoreInfo?.deductions?.map(d => `${d.category}: ${d.reason}`).join(' | '),
+      }).catch(err => console.error('[Sheets] score sync failed:', err.message));
+    }
+
+    res.json({ ticketId: id, scoreOverride: score, originalScore, review });
+  } catch (error) {
+    console.error('Error saving score override:', error);
+    res.status(500).json({ error: 'Failed to save score override' });
+  }
+});
+
+// GET /api/analysis/ticket/:id/score-history - Audit trail for manual score adjustments
+router.get('/ticket/:id/score-history', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const history = await getScoreAdjustmentHistory(id);
+    const scores = await getQAScoresBulk([id]);
+    const current = scores[id] ?? null;
+    res.json({ ticketId: id, current, history });
+  } catch (error) {
+    console.error('Error fetching score history:', error);
+    res.status(500).json({ error: 'Failed to fetch score history' });
+  }
+});
+
 // POST /api/analysis/batch - Batch analyze tickets
 router.post('/batch', async (req, res) => {
   try {
@@ -653,6 +709,8 @@ async function handleCachedScoresRequest(ticketIdsInput: unknown, res: any) {
         if (cached?.qaScore !== undefined) {
           dbScores[id] = {
             qaScore: cached.qaScore,
+            originalScore: cached.qaScore,
+            hasOverride: false,
             summary: cached.summary || null,
             deductions: cached.deductions || [],
           };
@@ -670,6 +728,8 @@ async function handleCachedScoresRequest(ticketIdsInput: unknown, res: any) {
             if (Number.isFinite(fallbackScore)) {
               dbScores[id] = {
                 qaScore: fallbackScore,
+                originalScore: fallbackScore,
+                hasOverride: false,
                 summary: ((stored as any).summary as string) || null,
                 deductions: Array.isArray((stored as any).deductions) ? (stored as any).deductions : [],
               };

@@ -81,6 +81,10 @@ export const analysisApi = {
     api.post('/analysis/cached-scores', { ticketIds }),
   getAgentInsights: (email: string, date: string, dateMode: DateMode = 'activity', sampleTicketIds?: string[]) =>
     api.get(`/analysis/agent/${encodeURIComponent(email)}/insights?date=${date}&dateMode=${dateMode}${sampleTicketIds?.length ? `&ticketIds=${sampleTicketIds.join(',')}` : ''}`),
+  adjustScore: (id: string, scoreOverride: number, adjustedBy: string, adjustmentReason?: string) =>
+    api.patch(`/analysis/ticket/${id}/score`, { scoreOverride, adjustedBy, adjustmentReason }),
+  getScoreHistory: (id: string) =>
+    api.get(`/analysis/ticket/${id}/score-history`),
 };
 
 export const customersApi = {
