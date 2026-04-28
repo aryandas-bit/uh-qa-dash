@@ -5,6 +5,18 @@ import { ThumbsUp, Flag, ClipboardList, TrendingUp, AlertTriangle, MessageSquare
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { analysisApi } from '../api/client';
 
+interface QCReviewRow {
+  ticketId: string;
+  subject?: string | null;
+  agentEmail?: string | null;
+  csat?: number | null;
+  date?: string | null;
+  day?: string | null;
+  status: 'approved' | 'flagged';
+  reviewerName?: string | null;
+  note?: string | null;
+}
+
 export default function QCReviewsPage() {
   const [dateFilter, setDateFilter] = useState('');
   const [agentFilter, setAgentFilter] = useState('');
@@ -15,7 +27,7 @@ export default function QCReviewsPage() {
     staleTime: 1000 * 60 * 2,
   });
 
-  const allReviews: any[] = data?.data?.reviews || [];
+  const allReviews: QCReviewRow[] = data?.data?.reviews || [];
   const summary = data?.data?.summary || { total: 0, approved: 0, flagged: 0, approvalRate: 0 };
   const byAgent: Record<string, { approved: number; flagged: number }> = data?.data?.byAgent || {};
 
@@ -228,7 +240,7 @@ export default function QCReviewsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {reviews.map((r: any) => (
+                  {reviews.map((r) => (
                     <tr key={r.ticketId} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                       <td className="py-3 pr-4">
                         <Link to={`/ticket/${r.ticketId}`} className="text-uh-cyan hover:underline font-mono text-xs">

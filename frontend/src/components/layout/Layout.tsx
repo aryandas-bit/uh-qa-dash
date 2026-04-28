@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, AlertTriangle, ClipboardList, Inbox, PanelLeftClose, PanelLeft, TrendingUp } from 'lucide-react';
+import { LayoutDashboard, AlertTriangle, ClipboardList, Inbox, PanelLeftClose, PanelLeft, TrendingUp, RotateCcw } from 'lucide-react';
 import TicketSearchBar from '../common/TicketSearchBar';
+import AuditorSwitcher from '../common/AuditorSwitcher';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/tickets', label: 'Tickets', icon: Inbox },
   { path: '/trends', label: 'Trends', icon: TrendingUp },
+  { path: '/re-evaluations', label: 'Re-evaluations', icon: RotateCcw },
   { path: '/defaulters', label: 'Defaulters', icon: AlertTriangle },
   { path: '/qc-reviews', label: 'QC Reviews', icon: ClipboardList },
 ];
@@ -76,12 +78,13 @@ export default function Layout() {
           </ul>
         </nav>
 
-        {/* Ticket Search — pinned to bottom */}
+        {/* Auditor + Ticket Search — pinned to bottom */}
         <div
-          className={`px-2 pb-3 shrink-0 transition-all duration-300 ease-md3 ${
+          className={`px-2 pb-3 shrink-0 space-y-2 transition-all duration-300 ease-md3 ${
             collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'
           }`}
         >
+          <AuditorSwitcher />
           <TicketSearchBar />
         </div>
       </aside>
