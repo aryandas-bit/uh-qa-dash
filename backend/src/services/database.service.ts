@@ -138,9 +138,9 @@ const initPromise = reviewsDb.execute(`
     )
   `)
 ).then(() =>
-  reviewsDb.execute(`ALTER TABLE qa_scores ADD COLUMN deductions_json TEXT`).catch(() => {
-    /* column already exists */
-  })
+  reviewsDb.execute(`ALTER TABLE qa_scores ADD COLUMN deductions_json TEXT`).catch(() => {})
+).then(() =>
+  reviewsDb.execute(`ALTER TABLE qa_scores ADD COLUMN score_override REAL`).catch(() => {})
 ).then(() =>
   reviewsDb.execute(`
     CREATE TABLE IF NOT EXISTS ticket_quick_scores (
@@ -579,8 +579,9 @@ export async function saveScoreOverride(
   });
   const originalScore = scoreResult.rows[0] ? Number((scoreResult.rows[0] as any).qa_score) : null;
 
+  // Store override on qa_scores — always has a row for analyzed tickets, no dependency on a QC review existing
   await reviewsDb.execute({
-    sql: `UPDATE qa_reviews SET score_override = ? WHERE ticket_id = ?`,
+    sql: `UPDATE qa_scores SET score_override = ? WHERE ticket_id = ?`,
     args: [adjustedScore, ticketId],
   });
 
@@ -1421,17 +1422,16 @@ export async function getQAScoresBulk(
   if (ticketIds.length === 0) return {};
   await initPromise;
   const placeholders = ticketIds.map(() => '?').join(',');
-  // Apply score_override from qa_reviews when present — dump-based scores are the source of truth
+  // score_override lives on qa_scores itself — no join needed
   const result = await reviewsDb.execute({
-    sql: `SELECT qs.ticket_id,
-                 qs.qa_score as originalScore,
-                 COALESCE(qr.score_override, qs.qa_score) as qaScore,
-                 CASE WHEN qr.score_override IS NOT NULL THEN 1 ELSE 0 END as hasOverride,
-                 qs.summary,
-                 qs.deductions_json
-          FROM qa_scores qs
-          LEFT JOIN qa_reviews qr ON qr.ticket_id = qs.ticket_id
-          WHERE qs.ticket_id IN (${placeholders})`,
+    sql: `SELECT ticket_id,
+                 qa_score as originalScore,
+                 COALESCE(score_override, qa_score) as qaScore,
+                 CASE WHEN score_override IS NOT NULL THEN 1 ELSE 0 END as hasOverride,
+                 summary,
+                 deductions_json
+          FROM qa_scores
+          WHERE ticket_id IN (${placeholders})`,
     args: ticketIds,
   });
   const rows = result.rows as unknown as Array<{
