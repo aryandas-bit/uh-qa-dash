@@ -4,6 +4,7 @@ import { ArrowLeft, Mail, Ticket, Star, Users } from 'lucide-react';
 import ScoreBadge from '../components/common/ScoreBadge';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { customersApi } from '../api/client';
+import type { CustomerHistory, Ticket as TicketRecord } from '../types';
 
 export default function CustomerPage() {
   const { email } = useParams<{ email: string }>();
@@ -15,8 +16,8 @@ export default function CustomerPage() {
     enabled: !!decodedEmail,
   });
 
-  const history = data?.data;
-  const tickets = history?.tickets || [];
+  const history: CustomerHistory | undefined = data?.data;
+  const tickets: TicketRecord[] = history?.tickets || [];
 
   if (isLoading) {
     return (
@@ -95,7 +96,7 @@ export default function CustomerPage() {
             <div>
               <p className="text-slate-500 text-sm">Low CSAT</p>
               <p className="text-2xl font-bold text-uh-error">
-                {tickets.filter((t: any) => t.TICKET_CSAT > 0 && t.TICKET_CSAT < 3).length}
+                {tickets.filter((t) => t.TICKET_CSAT > 0 && t.TICKET_CSAT < 3).length}
               </p>
             </div>
           </div>
@@ -107,7 +108,7 @@ export default function CustomerPage() {
         <div className="card mb-8">
           <h2 className="text-lg font-semibold mb-4">Agents Who Handled This Customer</h2>
           <div className="flex flex-wrap gap-3">
-            {Object.entries(history.agentSummary).map(([agent, count]: [string, any]) => (
+            {Object.entries(history.agentSummary).map(([agent, count]) => (
               <Link
                 key={agent}
                 to={`/agent/${encodeURIComponent(agent)}`}
@@ -134,7 +135,7 @@ export default function CustomerPage() {
             <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-slate-100" />
 
             <div className="space-y-4">
-              {tickets.map((ticket: any) => (
+              {tickets.map((ticket) => (
                 <div key={ticket.TICKET_ID} className="relative pl-10">
                   {/* Timeline dot */}
                   <div

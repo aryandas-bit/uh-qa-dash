@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, User, Bot, Headphones, MessageSquare, Sparkles, AlertTriangle, CheckCircle, TrendingUp, Loader2, History, Users, RefreshCw, XCircle, Clock, ThumbsUp, Flag, RotateCcw } from 'lucide-react';
@@ -80,11 +80,57 @@ interface AuditMemory {
   resolutionState: string | null;
 }
 
+interface TriageDigest {
+  issueCategory?: string | null;
+  priority?: string | null;
+  customerSentiment?: string | null;
+  hasTechnicalIssue?: boolean;
+  repeatIssueLikely?: boolean;
+  resolutionState?: string | null;
+  keyFacts?: string[];
+  riskFlags?: string[];
+  shortDigest?: string | null;
+}
+
+interface RawMessage {
+  s?: string;
+  m?: string;
+  t?: string;
+  created_at?: string;
+}
+
+interface QuickReplyOption {
+  title?: string;
+}
+
+interface ParsedMessagePayload {
+  message?: string;
+  text?: string;
+  quickReplies?: {
+    title?: string;
+    options?: QuickReplyOption[];
+  };
+  image?: string;
+  event?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+  if (error && typeof error === 'object' && 'response' in error) {
+    const response = (error as { response?: { data?: { error?: string } } }).response;
+    if (response?.data?.error) return response.data.error;
+  }
+  return fallback;
+}
+
 function parseMessages(messagesJson: string): ParsedMessage[] {
   try {
-    const messages = JSON.parse(messagesJson || '[]');
+    const messages = JSON.parse(messagesJson || '[]') as RawMessage[];
     return messages
-      .map((msg: any) => {
+      .map((msg) => {
         // Determine sender type
         let sender: 'user' | 'agent' | 'bot' | 'note' = 'bot';
         if (msg.s === 'U') sender = 'user';
@@ -100,7 +146,7 @@ function parseMessages(messagesJson: string): ParsedMessage[] {
         if (typeof msg.m === 'string') {
           // Try to parse as JSON
           try {
-            let parsed = JSON.parse(msg.m);
+            let parsed = JSON.parse(msg.m) as ParsedMessagePayload | ParsedMessagePayload[];
             // Handle array-wrapped messages (e.g. [{"quickReplies":...}])
             if (Array.isArray(parsed)) {
               parsed = parsed[0] || {};
@@ -111,8 +157,9 @@ function parseMessages(messagesJson: string): ParsedMessage[] {
               content = parsed.text;
             } else if (parsed.quickReplies?.title) {
               content = parsed.quickReplies.title;
-              if (parsed.quickReplies.options?.length > 0) {
-                content += '\n[Options: ' + parsed.quickReplies.options.map((o: any) => o.title).join(', ') + ']';
+              const options = parsed.quickReplies.options || [];
+              if (options.length > 0) {
+                content += '\n[Options: ' + options.map((option) => option.title).join(', ') + ']';
               }
             } else if (parsed.image) {
               isImage = true;
@@ -152,7 +199,7 @@ function parseMessages(messagesJson: string): ParsedMessage[] {
 export default function TicketPage() {
   const { id } = useParams<{ id: string }>();
   const [analysis, setAnalysis] = useState<QAAnalysis | null>(null);
-  const [analysisMetadata, setAnalysisMetadata] = useState<{ isFallback?: boolean; triage?: any; analysisPath?: string } | null>(null);
+  const [analysisMetadata, setAnalysisMetadata] = useState<{ isFallback?: boolean; triage?: TriageDigest; analysisPath?: string } | null>(null);
   const [customerHistory, setCustomerHistory] = useState<CustomerTicketHistory[]>([]);
   const [auditMemories, setAuditMemories] = useState<AuditMemory[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -176,12 +223,100 @@ export default function TicketPage() {
   const ticket = ticketData?.data?.ticket;
   const messages = ticket?.MESSAGES_JSON ? parseMessages(ticket.MESSAGES_JSON) : [];
 
+  const loadCachedAnalysis = useCallback(async () => {
+    if (!id) return;
+    try {
+      const response = await analysisApi.getTicketAnalysis(id, false, true);
+      if (response.data.analysis) {
+        setAnalysis(response.data.analysis);
+        setAnalysisMetadata({
+          isFallback: response.data.analysis.isFallback || response.data.analysisInfo?.isFallback,
+          triage: response.data.analysis.triage || response.data.analysisInfo?.triage,
+          analysisPath: response.data.analysis.analysisPath || response.data.analysisInfo?.path,
+        });
+        setCustomerHistory(response.data.customerHistory || []);
+        setAuditMemories(response.data.auditMemories || []);
+      }
+      setReview(response.data.review || null);
+    } catch { /* no cached analysis — that's fine */ }
+  }, [id]);
+
+  // Explicit button click: triggers Gemini analysis
+  const handleAnalyze = useCallback(async (forceRefresh = true) => {
+    if (!id) return;
+    setIsAnalyzing(true);
+    setAnalysisError(null);
+    try {
+      const response = await analysisApi.getTicketAnalysis(id, forceRefresh);
+      setAnalysis(response.data.analysis);
+      setAnalysisMetadata({
+        isFallback: response.data.analysisInfo?.isFallback,
+        triage: response.data.analysisInfo?.triage,
+        analysisPath: response.data.analysisInfo?.path,
+      });
+      setCustomerHistory(response.data.customerHistory || []);
+      setAuditMemories(response.data.auditMemories || []);
+      setReview(response.data.review || null);
+    } catch (error: unknown) {
+      setAnalysisError(getApiErrorMessage(error, 'Failed to analyze ticket'));
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, [id]);
+
+  const handleClearReview = useCallback(async () => {
+    if (!id) return;
+    setIsReviewing(true);
+    try {
+      await analysisApi.clearReview(id);
+      setReview(null);
+      setPendingStatus(null);
+      setNoteInput('');
+    } catch (error: unknown) {
+      console.error('Failed to clear review:', error);
+    } finally {
+      setIsReviewing(false);
+    }
+  }, [id]);
+
+  const openReviewModal = useCallback((status: 'approved' | 'flagged') => {
+    if (!id) return;
+    // Toggle off if same status clicked again
+    if (review?.status === status) {
+      handleClearReview();
+      return;
+    }
+    setNoteInput(review?.note || '');
+    setPendingStatus(status);
+  }, [handleClearReview, id, review]);
+
+  const handleSubmitReview = useCallback(async () => {
+    if (!id || !pendingStatus) return;
+    setIsReviewing(true);
+    // Persist reviewer name for future reviews
+    try { if (reviewerName.trim()) localStorage.setItem('qa_reviewer_name', reviewerName.trim()); } catch { /* quota/private mode */ }
+    try {
+      const response = await analysisApi.reviewTicket(
+        id, pendingStatus,
+        noteInput.trim() || undefined,
+        reviewerName.trim() || undefined
+      );
+      setReview(response.data.review);
+      setPendingStatus(null);
+      setNoteInput('');
+    } catch (error: unknown) {
+      console.error('Failed to save review:', error);
+    } finally {
+      setIsReviewing(false);
+    }
+  }, [id, noteInput, pendingStatus, reviewerName]);
+
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't trigger if user is typing in an input or textarea
       if (
-        e.target instanceof HTMLInputElement || 
+        e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement ||
         e.target instanceof HTMLSelectElement
       ) {
@@ -216,101 +351,13 @@ export default function TicketPage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [analysis, pendingStatus, reviewerName, noteInput, id]);
+  }, [analysis, handleAnalyze, handleSubmitReview, openReviewModal, pendingStatus]);
 
-  // On load: only fetch cached/DB analysis — never trigger Gemini automatically
+  // On load: only fetch cached/DB analysis. Never trigger Gemini automatically.
   useEffect(() => {
     if (!ticket || analysis || isAnalyzing) return;
     loadCachedAnalysis();
-  }, [ticket]);
-
-  const loadCachedAnalysis = async () => {
-    if (!id) return;
-    try {
-      const response = await analysisApi.getTicketAnalysis(id, false, true);
-      if (response.data.analysis) {
-        setAnalysis(response.data.analysis);
-        setAnalysisMetadata({
-          isFallback: response.data.analysis.isFallback || response.data.analysisInfo?.isFallback,
-          triage: response.data.analysis.triage || response.data.analysisInfo?.triage,
-          analysisPath: response.data.analysis.analysisPath || response.data.analysisInfo?.path,
-        });
-        setCustomerHistory(response.data.customerHistory || []);
-        setAuditMemories(response.data.auditMemories || []);
-      }
-      setReview(response.data.review || null);
-    } catch { /* no cached analysis — that's fine */ }
-  };
-
-  // Explicit button click: triggers Gemini analysis
-  const handleAnalyze = async (forceRefresh = true) => {
-    if (!id) return;
-    setIsAnalyzing(true);
-    setAnalysisError(null);
-    try {
-      const response = await analysisApi.getTicketAnalysis(id, forceRefresh);
-      setAnalysis(response.data.analysis);
-      setAnalysisMetadata({
-        isFallback: response.data.analysisInfo?.isFallback,
-        triage: response.data.analysisInfo?.triage,
-        analysisPath: response.data.analysisInfo?.path,
-      });
-      setCustomerHistory(response.data.customerHistory || []);
-      setAuditMemories(response.data.auditMemories || []);
-      setReview(response.data.review || null);
-    } catch (error: any) {
-      setAnalysisError(error.response?.data?.error || 'Failed to analyze ticket');
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
-
-  const openReviewModal = (status: 'approved' | 'flagged') => {
-    if (!id) return;
-    // Toggle off if same status clicked again
-    if (review?.status === status) {
-      handleClearReview();
-      return;
-    }
-    setNoteInput(review?.note || '');
-    setPendingStatus(status);
-  };
-
-  const handleClearReview = async () => {
-    if (!id) return;
-    setIsReviewing(true);
-    try {
-      await analysisApi.clearReview(id);
-      setReview(null);
-      setPendingStatus(null);
-      setNoteInput('');
-    } catch (error: any) {
-      console.error('Failed to clear review:', error);
-    } finally {
-      setIsReviewing(false);
-    }
-  };
-
-  const handleSubmitReview = async () => {
-    if (!id || !pendingStatus) return;
-    setIsReviewing(true);
-    // Persist reviewer name for future reviews
-    try { if (reviewerName.trim()) localStorage.setItem('qa_reviewer_name', reviewerName.trim()); } catch { /* quota/private mode */ }
-    try {
-      const response = await analysisApi.reviewTicket(
-        id, pendingStatus,
-        noteInput.trim() || undefined,
-        reviewerName.trim() || undefined
-      );
-      setReview(response.data.review);
-      setPendingStatus(null);
-      setNoteInput('');
-    } catch (error: any) {
-      console.error('Failed to save review:', error);
-    } finally {
-      setIsReviewing(false);
-    }
-  };
+  }, [analysis, isAnalyzing, loadCachedAnalysis, ticket]);
 
   const getMessageIcon = (sender: string) => {
     switch (sender) {
@@ -843,27 +890,27 @@ export default function TicketPage() {
             ].map(([label, value]) => (
               <div key={label} className="bg-slate-50 rounded-lg p-2">
                 <p className="text-slate-400 uppercase tracking-wider text-[10px] mb-0.5">{label}</p>
-                <p className="font-medium text-slate-700 capitalize">{value}</p>
+                <p className="font-medium text-slate-700 capitalize">{String(value ?? '-')}</p>
               </div>
             ))}
           </div>
-          {(analysisMetadata.triage.keyFacts?.length > 0 || analysisMetadata.triage.riskFlags?.length > 0) && (
+          {((analysisMetadata.triage.keyFacts?.length ?? 0) > 0 || (analysisMetadata.triage.riskFlags?.length ?? 0) > 0) && (
             <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-              {analysisMetadata.triage.keyFacts?.length > 0 && (
+              {(analysisMetadata.triage.keyFacts?.length ?? 0) > 0 && (
                 <div>
                   <p className="text-slate-400 uppercase tracking-wider text-[10px] mb-1">Key Facts</p>
                   <ul className="space-y-1">
-                    {analysisMetadata.triage.keyFacts.map((fact: string, i: number) => (
+                    {analysisMetadata.triage.keyFacts?.map((fact, i) => (
                       <li key={i} className="text-slate-600">· {fact}</li>
                     ))}
                   </ul>
                 </div>
               )}
-              {analysisMetadata.triage.riskFlags?.length > 0 && (
+              {(analysisMetadata.triage.riskFlags?.length ?? 0) > 0 && (
                 <div>
                   <p className="text-slate-400 uppercase tracking-wider text-[10px] mb-1">Risk Flags</p>
                   <ul className="space-y-1">
-                    {analysisMetadata.triage.riskFlags.map((flag: string, i: number) => (
+                    {analysisMetadata.triage.riskFlags?.map((flag, i) => (
                       <li key={i} className="text-uh-warning">⚑ {flag}</li>
                     ))}
                   </ul>

@@ -87,6 +87,31 @@ interface AgentDailyPick {
   } | null;
 }
 
+interface DailyPicksResponse {
+  picks: AgentDailyPick[];
+  inProgress?: boolean;
+}
+
+interface DailyPicksStatus {
+  inProgress?: boolean;
+}
+
+interface AgentInsightCategory {
+  category: string;
+  count: number;
+}
+
+interface AgentInsightsResponse {
+  insight?: string | null;
+  stats?: {
+    totalTickets: number;
+    analyzedCount: number;
+    avgScore: number | null;
+    lowScoreCount: number;
+    topDeductionCategories?: AgentInsightCategory[];
+  };
+}
+
 interface ReportCard {
   overallAssessment: string;
   summary: string;
@@ -124,6 +149,15 @@ interface ReportCard {
     reviewStatus: string | null;
     reviewNote: string | null;
   }>;
+}
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+  if (error && typeof error === 'object' && 'response' in error) {
+    const response = (error as { response?: { data?: { error?: string } } }).response;
+    if (response?.data?.error) return response.data.error;
+  }
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
 }
 
 function formatTime(seconds: number | null) {
@@ -202,18 +236,18 @@ export default function AgentDetailPage() {
 
   const { data: picksData } = useQuery({
     queryKey: ['daily-picks', date, dateMode, decodedEmail],
-    queryFn: () => dailyPicksApi.getPicks(date, dateMode, decodedEmail, false).then((response) => response.data),
+    queryFn: () => dailyPicksApi.getPicks(date, dateMode, decodedEmail, false).then((response) => response.data as DailyPicksResponse),
     enabled: !!date && !!decodedEmail,
     staleTime: 1000 * 10,
-    refetchInterval: (query) => ((query.state.data as any)?.inProgress ? 3000 : false),
+    refetchInterval: (query) => query.state.data?.inProgress ? 3000 : false,
   });
 
   const { data: auditStatusData } = useQuery({
     queryKey: ['daily-picks-status', date, dateMode, decodedEmail],
-    queryFn: () => dailyPicksApi.getStatus(date, dateMode, decodedEmail).then((response) => response.data),
+    queryFn: () => dailyPicksApi.getStatus(date, dateMode, decodedEmail).then((response) => response.data as DailyPicksStatus),
     enabled: !!date && !!decodedEmail,
     staleTime: 0,
-    refetchInterval: (query) => ((query.state.data as any)?.inProgress ? 2000 : false),
+    refetchInterval: (query) => query.state.data?.inProgress ? 2000 : false,
   });
 
   const tickets: AgentTicketRow[] = ticketsData?.data?.tickets || [];
@@ -222,7 +256,7 @@ export default function AgentDetailPage() {
     .map((ticket) => String(ticket.TICKET_ID));
 
   // Include sample pick IDs in score queries — picks may include non-resolved tickets
-  const sampleTicketIdsForQuery = (picksData?.picks || []).map((p: any) => String(p.ticketId));
+  const sampleTicketIdsForQuery = (picksData?.picks || []).map((pick) => String(pick.ticketId));
   const scoreQueryIds = [...new Set([...relevantTicketIds, ...sampleTicketIdsForQuery])];
 
   const { data: reviewsData } = useQuery({
@@ -250,7 +284,9 @@ export default function AgentDetailPage() {
     enabled: !!decodedEmail && !!date && insightsEnabled,
     staleTime: 1000 * 60,
   });
-  const insightsResult = insightsData?.data;
+  const insightsResult: AgentInsightsResponse | undefined = insightsData?.data;
+  const insightsStats = insightsResult?.stats;
+  const insightTopCategories = insightsStats?.topDeductionCategories || [];
 
   const { data: trendData } = useQuery({
     queryKey: ['agent-qa-trend', decodedEmail],
@@ -626,9 +662,9 @@ export default function AgentDetailPage() {
             <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold">AI Insights</h3>
-                {insightsResult?.stats && (
+                {insightsStats && (
                   <span className="text-[10px] uppercase tracking-wide text-slate-400">
-                    Sample · {insightsResult.stats.analyzedCount}/{insightsResult.stats.totalTickets} audited
+                    Sample · {insightsStats.analyzedCount}/{insightsStats.totalTickets} audited
                   </span>
                 )}
               </div>
@@ -665,32 +701,32 @@ export default function AgentDetailPage() {
               </div>
             ) : insightsResult?.insight ? (
               <p className="text-sm text-slate-700 leading-relaxed">{insightsResult.insight}</p>
-            ) : insightsResult?.stats?.analyzedCount === 0 ? (
+            ) : insightsStats?.analyzedCount === 0 ? (
               <p className="text-sm text-slate-500">Audit the 10-ticket sample below to unlock day-level insights and report card generation.</p>
             ) : (
               <p className="text-sm text-slate-500">Insight unavailable right now. Try refreshing after auditing more tickets.</p>
             )}
-            {insightsResult?.stats?.analyzedCount > 0 && (
+            {insightsStats && insightsStats.analyzedCount > 0 && (
               <div className="flex items-center gap-4 mt-3 text-xs flex-wrap">
                 <span className="flex items-center gap-1">
                   <span className="font-semibold text-slate-700">Avg QA:</span>
                   <span className={`font-bold ${
-                    (insightsResult.stats.avgScore ?? 0) >= 80 ? 'text-uh-success' :
-                    (insightsResult.stats.avgScore ?? 0) >= 60 ? 'text-uh-warning' : 'text-uh-error'
+                    (insightsStats.avgScore ?? 0) >= 80 ? 'text-uh-success' :
+                    (insightsStats.avgScore ?? 0) >= 60 ? 'text-uh-warning' : 'text-uh-error'
                   }`}>
-                    {insightsResult.stats.avgScore ?? '—'}
+                    {insightsStats.avgScore ?? '—'}
                   </span>
                 </span>
-                {insightsResult.stats.lowScoreCount > 0 && (
+                {insightsStats.lowScoreCount > 0 && (
                   <span className="flex items-center gap-1 text-uh-error">
                     <TrendingDown size={12} />
-                    {insightsResult.stats.lowScoreCount} low-score
+                    {insightsStats.lowScoreCount} low-score
                   </span>
                 )}
-                {insightsResult.stats.topDeductionCategories?.length > 0 && (
+                {insightTopCategories.length > 0 && (
                   <span className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-slate-500">Top misses:</span>
-                    {insightsResult.stats.topDeductionCategories.slice(0, 3).map((item: any) => (
+                    {insightTopCategories.slice(0, 3).map((item) => (
                       <span key={item.category} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] capitalize">
                         {item.category} <span className="font-semibold">×{item.count}</span>
                       </span>
@@ -790,13 +826,13 @@ export default function AgentDetailPage() {
 
         {reportCardMutation.isError && (
           <div className="mb-4 p-3 rounded-xl bg-uh-error/10 text-uh-error text-sm">
-            {(reportCardMutation.error as any)?.response?.data?.error || 'Failed to generate report card'}
+            {getApiErrorMessage(reportCardMutation.error, 'Failed to generate report card')}
           </div>
         )}
 
         {auditNowMutation.isError && (
           <div className="mb-4 p-3 rounded-xl bg-uh-error/10 text-uh-error text-sm">
-            {(auditNowMutation.error as any)?.response?.data?.error || (auditNowMutation.error as Error)?.message || 'Failed to audit random sample'}
+            {getApiErrorMessage(auditNowMutation.error, 'Failed to audit random sample')}
           </div>
         )}
 
