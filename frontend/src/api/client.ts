@@ -87,6 +87,18 @@ export const analysisApi = {
     api.get(`/analysis/ticket/${id}/score-history`),
 };
 
+export const dumpApi = {
+  importXlsx: (file: File, clearExisting = false) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('clearExisting', String(clearExisting));
+    return api.post('/dump/import-xlsx', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000,
+    });
+  },
+};
+
 export const customersApi = {
   getHistory: (email: string, limit = 50) =>
     api.get(`/customers/${encodeURIComponent(email)}/history?limit=${limit}`),

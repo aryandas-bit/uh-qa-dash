@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   Users,
@@ -13,13 +13,15 @@ import {
   Inbox,
   ClipboardCheck,
   ShieldAlert,
+  Upload,
+  Loader2,
 } from 'lucide-react';
 import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { agentsApi, ticketsApi } from '../api/client';
+import { agentsApi, ticketsApi, dumpApi } from '../api/client';
 import AgentTrendSparkline from '../components/agent/AgentTrendSparkline';
 import { useDateStore } from '../store/dateStore';
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 function formatAgentName(email?: string) {
   if (!email) return 'Unknown';
@@ -35,6 +37,22 @@ function ScoreChip({ score }: { score: number | null }) {
 
 export default function DashboardPage() {
   const { selectedDate, setSelectedDate, dateMode, setDateMode } = useDateStore();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importMsg, setImportMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const importMutation = useMutation({
+    mutationFn: (file: File) => dumpApi.importXlsx(file, false),
+    onSuccess: (res) => {
+      const d = res.data;
+      setImportMsg({ ok: true, text: `${d.inserted} tickets imported for ${d.date}${d.unknownIds?.length ? ` · ${d.unknownIds.length} unknown IDs` : ''}` });
+      setSelectedDate(d.date);
+      window.setTimeout(() => setImportMsg(null), 6000);
+    },
+    onError: (err: any) => {
+      setImportMsg({ ok: false, text: err.response?.data?.error || err.message || 'Import failed' });
+      window.setTimeout(() => setImportMsg(null), 6000);
+    },
+  });
 
   const { data: datesData, isLoading: datesLoading } = useQuery({
     queryKey: ['dates'],
@@ -125,8 +143,34 @@ export default function DashboardPage() {
             </button>
           </div>
           <DatePicker selectedDate={pickerDate} onDateChange={setSelectedDate} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) importMutation.mutate(file);
+              e.target.value = '';
+            }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importMutation.isPending}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm text-slate-600 disabled:opacity-50 transition-all"
+            title="Import xlsx dump — filename must be DD.MM.YY.xlsx"
+          >
+            {importMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+            Import xlsx
+          </button>
         </div>
       </div>
+
+      {importMsg && (
+        <div className={`mb-4 px-4 py-2.5 rounded-xl text-sm ${importMsg.ok ? 'bg-uh-success/10 text-uh-success border border-uh-success/20' : 'bg-uh-error/10 text-uh-error border border-uh-error/20'}`}>
+          {importMsg.text}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="flex items-center justify-center py-20">

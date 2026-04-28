@@ -800,67 +800,129 @@ export default function AgentDetailPage() {
           </div>
         )}
 
+        {sampleRows.length > 0 && (
+          <div className="flex items-center gap-2 mb-3 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+            <UserCheck size={13} className="text-uh-purple shrink-0" />
+            <input
+              type="text"
+              value={adjusterName}
+              onChange={(e) => setAdjusterName(e.target.value)}
+              placeholder="Your name to enable score ±1 adjustments"
+              className="text-xs px-2 py-1 rounded border border-slate-200 bg-white text-slate-700 flex-1 max-w-xs focus:outline-none focus:ring-1 focus:ring-uh-purple/50"
+            />
+            {adjusterName.trim() && (
+              <span className="text-[10px] text-uh-purple font-medium">Score editing active</span>
+            )}
+          </div>
+        )}
+
         {sampleRows.length === 0 ? (
           <p className="text-sm text-slate-400">No daily order sample exists yet for this agent on this date. Click "Run Audits" to generate one instantly.</p>
         ) : (
           <div className="space-y-3">
-            {sampleRows.map((row) => (
-              <Link
-                key={row.pick.ticketId}
-                to={`/ticket/${row.pick.ticketId}`}
-                className="block p-4 rounded-xl bg-slate-50 hover:bg-slate-100 transition-all"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                      <span className="text-uh-cyan font-mono text-xs">#{row.pick.ticketId}</span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-200 text-slate-700">
-                        Pick {row.pick.pickOrder}
-                      </span>
-                      {row.pick.pickReason && (
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                          row.pick.pickReason === 'High Risk'
-                            ? 'bg-uh-error/10 text-uh-error border border-uh-error/20'
-                            : 'bg-uh-cyan/10 text-uh-cyan border border-uh-cyan/20'
-                        }`}>
-                          {row.pick.pickReason}
-                        </span>
-                      )}
-                      <ReviewBadge ticketId={String(row.pick.ticketId)} />
-                      {!row.review && row.score && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-uh-warning/10 text-uh-warning">
-                          Review pending
-                        </span>
-                      )}
-                      {fallbackIds.has(String(row.pick.ticketId)) && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-uh-warning/15 text-uh-warning border border-uh-warning/30">
-                          Provisional — Gemini fallback
-                        </span>
-                      )}
-                      {!row.score && !fallbackIds.has(String(row.pick.ticketId)) && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-200 text-slate-500">
-                          Audit pending
-                        </span>
-                      )}
+            {sampleRows.map((row) => {
+              const tid = String(row.pick.ticketId);
+              const effectiveScore = cachedScores[tid]?.qaScore;
+              const hasOverride = cachedScores[tid]?.hasOverride ?? false;
+              const originalScore = cachedScores[tid]?.originalScore;
+              const isAdjustingThis = adjustingTicketId === tid && adjustScoreMutation.isPending;
+              const canAdjustThis = adjusterName.trim().length > 0 && effectiveScore != null;
+
+              return (
+                <div key={tid} className="relative rounded-xl bg-slate-50 hover:bg-slate-100 transition-all">
+                  <Link
+                    to={`/ticket/${tid}`}
+                    className="block p-4 pr-28"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                          <span className="text-uh-cyan font-mono text-xs">#{tid}</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-200 text-slate-700">
+                            Pick {row.pick.pickOrder}
+                          </span>
+                          {row.pick.pickReason && (
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                              row.pick.pickReason === 'High Risk'
+                                ? 'bg-uh-error/10 text-uh-error border border-uh-error/20'
+                                : 'bg-uh-cyan/10 text-uh-cyan border border-uh-cyan/20'
+                            }`}>
+                              {row.pick.pickReason}
+                            </span>
+                          )}
+                          <ReviewBadge ticketId={tid} />
+                          {!row.review && row.score && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-uh-warning/10 text-uh-warning">
+                              Review pending
+                            </span>
+                          )}
+                          {fallbackIds.has(tid) && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-uh-warning/15 text-uh-warning border border-uh-warning/30">
+                              Provisional — Gemini fallback
+                            </span>
+                          )}
+                          {!row.score && !fallbackIds.has(tid) && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-200 text-slate-500">
+                              Audit pending
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm font-medium text-slate-800 truncate">
+                          {row.ticket?.SUBJECT || row.pick.ticket?.subject || 'No subject'}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1 truncate">
+                          {row.ticket?.VISITOR_EMAIL || row.pick.ticket?.customerEmail || 'No customer email'}
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-sm font-medium text-slate-800 truncate">
-                      {row.ticket?.SUBJECT || row.pick.ticket?.subject || 'No subject'}
-                    </p>
-                    <p className="text-xs text-slate-400 mt-1 truncate">
-                      {row.ticket?.VISITOR_EMAIL || row.pick.ticket?.customerEmail || 'No customer email'}
-                    </p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="mb-2">
-                      <ScorePill ticketId={String(row.pick.ticketId)} />
-                    </div>
+                  </Link>
+
+                  {/* Score + adjustment controls — outside Link to prevent navigation */}
+                  <div className="absolute right-3 top-3 flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
+                    {canAdjustThis ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => adjustScoreMutation.mutate({ ticketId: tid, newScore: Math.max(0, Math.round(effectiveScore!) - 1) })}
+                          disabled={isAdjustingThis || effectiveScore === 0}
+                          className="w-6 h-6 rounded-lg bg-white border border-slate-200 hover:border-uh-error/40 hover:bg-uh-error/5 text-slate-500 flex items-center justify-center disabled:opacity-30 transition-colors shadow-sm"
+                          title="Decrease score by 1"
+                        >
+                          <Minus size={10} />
+                        </button>
+                        <div className="text-center min-w-[48px]">
+                          {isAdjustingThis ? (
+                            <Loader2 size={12} className="animate-spin text-uh-purple mx-auto" />
+                          ) : (
+                            <span className={`text-sm font-bold ${
+                              effectiveScore >= 80 ? 'text-uh-success' :
+                              effectiveScore >= 60 ? 'text-uh-warning' : 'text-uh-error'
+                            } ${hasOverride ? 'underline decoration-dotted' : ''}`}>
+                              {Math.round(effectiveScore)}
+                            </span>
+                          )}
+                          {hasOverride && originalScore != null && (
+                            <div className="text-[9px] text-slate-400 leading-tight">{Math.round(originalScore)} orig</div>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => adjustScoreMutation.mutate({ ticketId: tid, newScore: Math.min(100, Math.round(effectiveScore!) + 1) })}
+                          disabled={isAdjustingThis || effectiveScore === 100}
+                          className="w-6 h-6 rounded-lg bg-white border border-slate-200 hover:border-uh-success/40 hover:bg-uh-success/5 text-slate-500 flex items-center justify-center disabled:opacity-30 transition-colors shadow-sm"
+                          title="Increase score by 1"
+                        >
+                          <Plus size={10} />
+                        </button>
+                      </div>
+                    ) : (
+                      <ScorePill ticketId={tid} />
+                    )}
                     <p className="text-xs text-slate-400">
                       {formatTime(row.ticket?.FIRST_RESPONSE_DURATION_SECONDS ?? row.pick.ticket?.responseTimeSeconds ?? null)}
                     </p>
                   </div>
                 </div>
-              </Link>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
