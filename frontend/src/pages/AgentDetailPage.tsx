@@ -459,10 +459,6 @@ export default function AgentDetailPage() {
     }
   };
 
-  const formatScoreCell = (score: number | null) => {
-    if (score === null || score === undefined) return 'NA';
-    return `${Math.round(score)} / 100`;
-  };
 
   const getDeductionReason = (ticketId: string, category: 'opening' | 'process' | 'chat_handling' | 'closing' | 'fatal') => {
     const entry = cachedScores[String(ticketId)];
