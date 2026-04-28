@@ -1577,7 +1577,14 @@ export async function syncDateFromMetabase(date: string): Promise<number> {
 export async function ensureDateSynced(date: string): Promise<void> {
   if (!isMetabaseEnabled) return;
   const synced = await isDateSynced(date);
-  if (!synced) await syncDateFromMetabase(date);
+  if (!synced) {
+    try {
+      await syncDateFromMetabase(date);
+    } catch (err: any) {
+      // Metabase unreachable (e.g. no VPN) — use whatever is already in raw_tickets
+      console.warn(`[Metabase] Sync failed for ${date}, serving existing data: ${err.message}`);
+    }
+  }
 }
 
 export async function getSyncLog(): Promise<Array<{ date: string; syncedAt: string; rowCount: number }>> {
