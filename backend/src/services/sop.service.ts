@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { findSOPFromNotion, isNotionSOPEnabled } from './notion-sop.service.js';
 
 // SOPs are sourced from https://cxcodex.vercel.app/cx-codex (CX Codex)
 // src/data/sops.json is the current snapshot — update it when CX Codex SOPs change.
@@ -170,4 +171,41 @@ export function getSOPCategories(): string[] {
     if (sop.category) categories.add(sop.category);
   });
   return Array.from(categories);
+}
+
+/**
+ * Returns SOP content as plain text for use in the AI prompt.
+ * Tries Notion first (if NOTION_TOKEN is set), falls back to sops.json.
+ */
+export async function findMatchingSOPContent(
+  category?: string,
+  tags?: string,
+): Promise<{ title: string; content: string } | null> {
+  // Try Notion first
+  if (isNotionSOPEnabled) {
+    const notionResult = await findSOPFromNotion(category, tags);
+    if (notionResult) {
+      console.log(`[SOP] Notion match: "${notionResult.title}"`);
+      return notionResult;
+    }
+  }
+
+  // Fall back to static sops.json
+  const sop = findMatchingSOP(category, tags);
+  if (!sop) return null;
+
+  const lines: string[] = [
+    `SOP: ${sop.title}`,
+    `Case: ${sop.caseIdentifier || 'N/A'}`,
+    `Description: ${sop.description || 'N/A'}`,
+    '',
+    'Steps:',
+    ...sop.steps.flatMap(s => [
+      `${s.stepNumber}. ${s.title}`,
+      ...(s.description ? [`   ${s.description}`] : []),
+      ...(s.instructions || []).map(i => `   - ${i}`),
+    ]),
+  ];
+
+  return { title: sop.title, content: lines.join('\n') };
 }

@@ -1,4 +1,4 @@
-import { findMatchingSOP } from './sop.service.js';
+import { findMatchingSOPContent } from './sop.service.js';
 import type { AuditMemoryRecord } from './database.service.js';
 
 const GROQ_API_BASE = 'https://api.groq.com/openai/v1/chat/completions';
@@ -306,15 +306,10 @@ export async function analyzeTicket(
   const formattedCategory = category?.trim() || 'Unknown';
 
   if (category || tags) {
-    const sop = findMatchingSOP(category, tags);
-    if (sop) {
-      matchedSOP = sop.title;
-      sopContent = formatSOPForPrompt(
-        sop,
-        formattedCategory,
-        formattedTags,
-        normalizedMessages.map((message) => message.content).join('\n')
-      );
+    const sopResult = await findMatchingSOPContent(category, tags);
+    if (sopResult) {
+      matchedSOP = sopResult.title;
+      sopContent = sopResult.content;
     }
   }
 

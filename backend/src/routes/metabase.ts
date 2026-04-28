@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { syncDateFromMetabase, getSyncLog, isDateSynced } from '../services/database.service.js';
 import { isMetabaseEnabled } from '../services/metabase.service.js';
+import { clearNotionSOPCache, isNotionSOPEnabled } from '../services/notion-sop.service.js';
 
 export const metabaseRouter = Router();
 
@@ -9,7 +10,14 @@ metabaseRouter.get('/status', (_req, res) => {
     enabled: isMetabaseEnabled,
     baseUrl: process.env.METABASE_BASE_URL || null,
     cardId: process.env.METABASE_CARD_ID || '19330',
+    notionSopEnabled: isNotionSOPEnabled,
   });
+});
+
+// POST /api/metabase/sop-cache/clear — force Notion SOP cache refresh
+metabaseRouter.post('/sop-cache/clear', (_req, res) => {
+  clearNotionSOPCache();
+  res.json({ ok: true, message: 'Notion SOP cache cleared' });
 });
 
 metabaseRouter.get('/sync-log', async (_req, res) => {
