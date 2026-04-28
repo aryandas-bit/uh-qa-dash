@@ -1,10 +1,11 @@
 import dotenv from 'dotenv';
 dotenv.config();
 import { createClient } from '@libsql/client';
+import { fetchTicketsFromMetabase, isMetabaseEnabled } from './metabase.service.js';
 
+// Main database — always Turso (or local dev.db); Metabase syncs INTO this DB
 const mainDbUrl = process.env.TURSO_DB_URL || 'file:./dev.db';
 
-// Main database (defaults to a local dev DB when TURSO_DB_URL is not set)
 const mainDb = createClient({
   url: mainDbUrl,
   authToken: process.env.TURSO_DB_TOKEN,
@@ -16,34 +17,39 @@ const reviewsDb = createClient({
   authToken: process.env.TURSO_REVIEWS_TOKEN || process.env.TURSO_DB_TOKEN,
 });
 
-const initMainPromise = mainDbUrl.startsWith('file:')
-  ? mainDb.execute(`
-      CREATE TABLE IF NOT EXISTS raw_tickets (
-        TICKET_ID TEXT,
-        VISITOR_NAME TEXT,
-        VISITOR_EMAIL TEXT,
-        SUBJECT TEXT,
-        TAGS TEXT,
-        TICKET_STATUS TEXT,
-        PRIORITY TEXT,
-        AGENT_EMAIL TEXT,
-        RESOLVED_BY TEXT,
-        FIRST_RESPONSE_DURATION_SECONDS INTEGER,
-        AVG_RESPONSE_TIME_SECONDS INTEGER,
-        SPENT_TIME_SECONDS INTEGER,
-        TICKET_CSAT INTEGER,
-        AGENT_RATING INTEGER,
-        MESSAGES_JSON TEXT,
-        MESSAGE_COUNT INTEGER,
-        USER_MESSAGE_COUNT INTEGER,
-        AGENT_MESSAGE_COUNT INTEGER,
-        DAY TEXT,
-        GROUP_NAME TEXT,
-        INITIALIZED_TIME TEXT,
-        RESOLVED_TIME TEXT
-      )
-    `)
-  : Promise.resolve();
+// Add indexes on raw_tickets for common query patterns (runs on every cold start, idempotent)
+mainDb.execute(`CREATE INDEX IF NOT EXISTS idx_raw_tickets_day ON raw_tickets(DAY)`).catch(() => {});
+mainDb.execute(`CREATE INDEX IF NOT EXISTS idx_raw_tickets_agent ON raw_tickets(AGENT_EMAIL)`).catch(() => {});
+mainDb.execute(`CREATE INDEX IF NOT EXISTS idx_raw_tickets_init ON raw_tickets(INITIALIZED_TIME)`).catch(() => {});
+mainDb.execute(`CREATE INDEX IF NOT EXISTS idx_raw_tickets_agent_day ON raw_tickets(AGENT_EMAIL, DAY)`).catch(() => {});
+
+// Create raw_tickets if it doesn't exist — safe on both local SQLite and Turso
+const initMainPromise = mainDb.execute(`
+    CREATE TABLE IF NOT EXISTS raw_tickets (
+      TICKET_ID TEXT,
+      VISITOR_NAME TEXT,
+      VISITOR_EMAIL TEXT,
+      SUBJECT TEXT,
+      TAGS TEXT,
+      TICKET_STATUS TEXT,
+      PRIORITY TEXT,
+      AGENT_EMAIL TEXT,
+      RESOLVED_BY TEXT,
+      FIRST_RESPONSE_DURATION_SECONDS INTEGER,
+      AVG_RESPONSE_TIME_SECONDS INTEGER,
+      SPENT_TIME_SECONDS INTEGER,
+      TICKET_CSAT INTEGER,
+      AGENT_RATING INTEGER,
+      MESSAGES_JSON TEXT,
+      MESSAGE_COUNT INTEGER,
+      USER_MESSAGE_COUNT INTEGER,
+      AGENT_MESSAGE_COUNT INTEGER,
+      DAY TEXT,
+      GROUP_NAME TEXT,
+      INITIALIZED_TIME TEXT,
+      RESOLVED_TIME TEXT
+    )
+  `).catch(() => { /* table already exists */ });
 
 // Initialize reviews table once, share this promise across all callers
 const initPromise = reviewsDb.execute(`
@@ -55,9 +61,9 @@ const initPromise = reviewsDb.execute(`
     reviewed_at TEXT NOT NULL
   )
 `).then(() =>
-  reviewsDb.execute(`ALTER TABLE qa_reviews ADD COLUMN reviewer_name TEXT`).catch(() => {
-    /* column already exists */
-  })
+  reviewsDb.execute(`ALTER TABLE qa_reviews ADD COLUMN reviewer_name TEXT`).catch(() => {})
+).then(() =>
+  reviewsDb.execute(`ALTER TABLE qa_reviews ADD COLUMN score_override INTEGER`).catch(() => {})
 ).then(() =>
   reviewsDb.execute(`
     CREATE TABLE IF NOT EXISTS audit_memories (
@@ -132,9 +138,9 @@ const initPromise = reviewsDb.execute(`
     )
   `)
 ).then(() =>
-  reviewsDb.execute(`ALTER TABLE qa_scores ADD COLUMN deductions_json TEXT`).catch(() => {
-    /* column already exists */
-  })
+  reviewsDb.execute(`ALTER TABLE qa_scores ADD COLUMN deductions_json TEXT`).catch(() => {})
+).then(() =>
+  reviewsDb.execute(`ALTER TABLE qa_scores ADD COLUMN score_override REAL`).catch(() => {})
 ).then(() =>
   reviewsDb.execute(`
     CREATE TABLE IF NOT EXISTS ticket_quick_scores (
@@ -157,6 +163,29 @@ const initPromise = reviewsDb.execute(`
       PRIMARY KEY (agent_email, date)
     )
   `)
+).then(() =>
+  reviewsDb.execute(`
+    CREATE TABLE IF NOT EXISTS metabase_sync_log (
+      date TEXT PRIMARY KEY,
+      synced_at TEXT NOT NULL,
+      row_count INTEGER NOT NULL DEFAULT 0
+    )
+  `)
+).then(() =>
+  reviewsDb.execute(`
+    CREATE TABLE IF NOT EXISTS score_adjustments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticket_id TEXT NOT NULL,
+      original_score REAL NOT NULL,
+      adjusted_score REAL NOT NULL,
+      adjustment_delta REAL NOT NULL,
+      adjusted_by TEXT NOT NULL,
+      adjusted_at TEXT NOT NULL,
+      adjustment_reason TEXT
+    )
+  `)
+).then(() =>
+  reviewsDb.execute(`CREATE INDEX IF NOT EXISTS idx_score_adjustments_ticket ON score_adjustments(ticket_id)`).catch(() => {})
 );
 
 export interface DailyPick {
@@ -254,7 +283,11 @@ export async function syncDailyPickAnalysisFlags(date: string, dateMode: DateMod
               analysis_status = 'success'
           WHERE pick_date = ?
             AND date_mode = ?
-            AND ticket_id IN (SELECT ticket_id FROM ticket_analyses)`,
+            AND ticket_id IN (
+              SELECT ticket_id
+              FROM ticket_analyses
+              WHERE COALESCE(json_extract(analysis_json, '$.isFallback'), 0) = 0
+            )`,
     args: [date, dateMode],
   });
 }
@@ -293,7 +326,10 @@ export async function getStoredTicketAnalysisIds(ticketIds: string[]): Promise<S
 
   const placeholders = ticketIds.map(() => '?').join(',');
   const result = await reviewsDb.execute({
-    sql: `SELECT ticket_id as ticketId FROM ticket_analyses WHERE ticket_id IN (${placeholders})`,
+    sql: `SELECT ticket_id as ticketId
+          FROM ticket_analyses
+          WHERE ticket_id IN (${placeholders})
+            AND COALESCE(json_extract(analysis_json, '$.isFallback'), 0) = 0`,
     args: ticketIds,
   });
 
@@ -301,6 +337,7 @@ export async function getStoredTicketAnalysisIds(ticketIds: string[]): Promise<S
 }
 
 export async function getActiveAgentEmails(date: string, dateMode: DateMode = 'activity'): Promise<string[]> {
+  await ensureDateSynced(date);
   await initMainPromise;
   const dateCondition = dateMode === 'initialized' ? 'DATE(INITIALIZED_TIME) = ?' : 'DAY = ?';
   const result = await mainDb.execute({
@@ -311,6 +348,7 @@ export async function getActiveAgentEmails(date: string, dateMode: DateMode = 'a
 }
 
 export async function getAgentTicketIds(agentEmail: string, date: string, dateMode: DateMode = 'activity'): Promise<string[]> {
+  await ensureDateSynced(date);
   await initMainPromise;
   const dateCondition = dateMode === 'initialized' ? 'DATE(INITIALIZED_TIME) = ?' : 'DAY = ?';
   const result = await mainDb.execute({
@@ -338,6 +376,7 @@ export async function getDailyPickCandidates(
   dateMode: DateMode = 'activity',
   agentEmail?: string
 ): Promise<DailyPickCandidate[]> {
+  await ensureDateSynced(date);
   await initMainPromise;
   const dateCondition = dateMode === 'initialized' ? 'DATE(INITIALIZED_TIME) = ?' : 'DAY = ?';
   const hasAgentFilter = Boolean(agentEmail);
@@ -412,7 +451,10 @@ export async function getDailyPickTicketSummaries(ticketIds: string[]): Promise<
       args: ticketIds,
     }),
     reviewsDb.execute({
-      sql: `SELECT ticket_id as ticketId FROM ticket_analyses WHERE ticket_id IN (${placeholders})`,
+      sql: `SELECT ticket_id as ticketId
+            FROM ticket_analyses
+            WHERE ticket_id IN (${placeholders})
+              AND COALESCE(json_extract(analysis_json, '$.isFallback'), 0) = 0`,
       args: ticketIds,
     }),
   ]);
@@ -445,6 +487,18 @@ export interface QAReview {
   note: string | null;
   reviewerName: string | null;
   reviewedAt: string;
+  scoreOverride: number | null;
+}
+
+export interface ScoreAdjustment {
+  id: number;
+  ticketId: string;
+  originalScore: number;
+  adjustedScore: number;
+  adjustmentDelta: number;
+  adjustedBy: string;
+  adjustedAt: string;
+  adjustmentReason: string | null;
 }
 
 export interface AuditMemoryRecord {
@@ -503,11 +557,57 @@ export async function saveQAReview(ticketId: string, status: 'approved' | 'flagg
 export async function getQAReview(ticketId: string): Promise<QAReview | undefined> {
   await initPromise;
   const result = await reviewsDb.execute({
-    sql: `SELECT status, note, reviewer_name as reviewerName, reviewed_at as reviewedAt
+    sql: `SELECT status, note, reviewer_name as reviewerName, reviewed_at as reviewedAt,
+                 score_override as scoreOverride
           FROM qa_reviews WHERE ticket_id = ?`,
     args: [ticketId],
   });
   return result.rows[0] as unknown as QAReview | undefined;
+}
+
+export async function saveScoreOverride(
+  ticketId: string,
+  adjustedScore: number,
+  adjustedBy: string,
+  adjustmentReason?: string,
+): Promise<{ originalScore: number | null }> {
+  await initPromise;
+
+  const scoreResult = await reviewsDb.execute({
+    sql: 'SELECT qa_score FROM qa_scores WHERE ticket_id = ?',
+    args: [ticketId],
+  });
+  const originalScore = scoreResult.rows[0] ? Number((scoreResult.rows[0] as any).qa_score) : null;
+
+  // Store override on qa_scores — always has a row for analyzed tickets, no dependency on a QC review existing
+  await reviewsDb.execute({
+    sql: `UPDATE qa_scores SET score_override = ? WHERE ticket_id = ?`,
+    args: [adjustedScore, ticketId],
+  });
+
+  if (originalScore !== null) {
+    await reviewsDb.execute({
+      sql: `INSERT INTO score_adjustments (ticket_id, original_score, adjusted_score, adjustment_delta, adjusted_by, adjusted_at, adjustment_reason)
+            VALUES (?, ?, ?, ?, ?, datetime('now'), ?)`,
+      args: [ticketId, originalScore, adjustedScore, adjustedScore - originalScore, adjustedBy, adjustmentReason || null],
+    });
+  }
+
+  return { originalScore };
+}
+
+export async function getScoreAdjustmentHistory(ticketId: string): Promise<ScoreAdjustment[]> {
+  await initPromise;
+  const result = await reviewsDb.execute({
+    sql: `SELECT id, ticket_id as ticketId, original_score as originalScore, adjusted_score as adjustedScore,
+                 adjustment_delta as adjustmentDelta, adjusted_by as adjustedBy, adjusted_at as adjustedAt,
+                 adjustment_reason as adjustmentReason
+          FROM score_adjustments
+          WHERE ticket_id = ?
+          ORDER BY adjusted_at DESC`,
+    args: [ticketId],
+  });
+  return result.rows as unknown as ScoreAdjustment[];
 }
 
 export async function deleteQAReview(ticketId: string): Promise<void> {
@@ -523,7 +623,8 @@ export async function getQAReviewsBulk(ticketIds: string[]): Promise<Record<stri
   await initPromise;
   const placeholders = ticketIds.map(() => '?').join(',');
   const result = await reviewsDb.execute({
-    sql: `SELECT ticket_id, status, note, reviewer_name as reviewerName, reviewed_at as reviewedAt
+    sql: `SELECT ticket_id, status, note, reviewer_name as reviewerName, reviewed_at as reviewedAt,
+                 score_override as scoreOverride
           FROM qa_reviews
           WHERE ticket_id IN (${placeholders})`,
     args: ticketIds,
@@ -531,7 +632,13 @@ export async function getQAReviewsBulk(ticketIds: string[]): Promise<Record<stri
   const rows = result.rows as unknown as Array<QAReview & { ticket_id: string }>;
   const out: Record<string, QAReview> = {};
   rows.forEach(row => {
-    out[row.ticket_id] = { status: row.status, note: row.note, reviewerName: row.reviewerName, reviewedAt: row.reviewedAt };
+    out[row.ticket_id] = {
+      status: row.status,
+      note: row.note,
+      reviewerName: row.reviewerName,
+      reviewedAt: row.reviewedAt,
+      scoreOverride: row.scoreOverride ?? null,
+    };
   });
   return out;
 }
@@ -800,6 +907,7 @@ export async function getAvailableDates(): Promise<string[]> {
 // Get agent summary for a specific date (using DISTINCT to avoid duplicates)
 // dateMode: 'activity' = filter by DAY field, 'initialized' = filter by INITIALIZED_TIME date
 export async function getAgentsDailySummary(date: string, dateMode: DateMode = 'activity'): Promise<AgentSummary[]> {
+  await ensureDateSynced(date);
   await initMainPromise;
   const dateCondition = dateMode === 'initialized'
     ? 'DATE(INITIALIZED_TIME) = ?'
@@ -829,7 +937,8 @@ export { normalizeTicketRow };
 // Get tickets for a specific agent on a specific date (deduplicated by TICKET_ID)
 // dateMode: 'activity' = filter by DAY field (when ticket had activity/resolved)
 // dateMode: 'initialized' = filter by INITIALIZED_TIME date (when ticket was created)
-export async function getAgentTickets(agentEmail: string, date: string, limit = 100, offset = 0, dateMode: DateMode = 'activity'): Promise<TicketRow[]> {
+export async function getAgentTickets(agentEmail: string, date: string, limit = 100, offset = 0, dateMode: DateMode = 'activity', skipSync = false): Promise<TicketRow[]> {
+  if (!skipSync) await ensureDateSynced(date);
   await initMainPromise;
   const dateCondition = dateMode === 'initialized'
     ? 'DATE(INITIALIZED_TIME) = ?'
@@ -1309,26 +1418,36 @@ export async function getAgentsQATrends(
 // Bulk-fetch persisted QA scores for a list of ticket IDs
 export async function getQAScoresBulk(
   ticketIds: string[]
-): Promise<Record<string, { qaScore: number; summary: string | null; deductions: QADeduction[] }>> {
+): Promise<Record<string, { qaScore: number; originalScore: number; hasOverride: boolean; summary: string | null; deductions: QADeduction[] }>> {
   if (ticketIds.length === 0) return {};
   await initPromise;
   const placeholders = ticketIds.map(() => '?').join(',');
+  // score_override lives on qa_scores itself — no join needed
   const result = await reviewsDb.execute({
-    sql: `SELECT ticket_id, qa_score as qaScore, summary, deductions_json
+    sql: `SELECT ticket_id,
+                 qa_score as originalScore,
+                 COALESCE(score_override, qa_score) as qaScore,
+                 CASE WHEN score_override IS NOT NULL THEN 1 ELSE 0 END as hasOverride,
+                 summary,
+                 deductions_json
           FROM qa_scores
           WHERE ticket_id IN (${placeholders})`,
     args: ticketIds,
   });
   const rows = result.rows as unknown as Array<{
     ticket_id: string;
+    originalScore: number;
     qaScore: number;
+    hasOverride: number;
     summary: string | null;
     deductions_json: string | null;
   }>;
-  const out: Record<string, { qaScore: number; summary: string | null; deductions: QADeduction[] }> = {};
+  const out: Record<string, { qaScore: number; originalScore: number; hasOverride: boolean; summary: string | null; deductions: QADeduction[] }> = {};
   rows.forEach(row => {
     out[row.ticket_id] = {
-      qaScore: row.qaScore,
+      qaScore: Number(row.qaScore),
+      originalScore: Number(row.originalScore),
+      hasOverride: Boolean(row.hasOverride),
       summary: row.summary,
       deductions: row.deductions_json ? JSON.parse(row.deductions_json) : [],
     };
@@ -1391,6 +1510,89 @@ export async function getTicketMessagesBulk(ticketIds: string[]): Promise<Record
     out[String(row.TICKET_ID)] = String(row.messages || '[]');
   });
   return out;
+}
+
+// ── Metabase sync ────────────────────────────────────────────────────────────
+
+export async function isDateSynced(date: string): Promise<boolean> {
+  if (!isMetabaseEnabled) return true;
+  await initPromise;
+  const result = await reviewsDb.execute({
+    sql: 'SELECT date FROM metabase_sync_log WHERE date = ?',
+    args: [date],
+  });
+  return result.rows.length > 0;
+}
+
+export async function syncDateFromMetabase(date: string): Promise<number> {
+  const tickets = await fetchTicketsFromMetabase(date, date);
+  if (tickets.length === 0) {
+    await reviewsDb.execute({
+      sql: 'INSERT OR REPLACE INTO metabase_sync_log (date, synced_at, row_count) VALUES (?, ?, ?)',
+      args: [date, new Date().toISOString(), 0],
+    });
+    return 0;
+  }
+
+  await initMainPromise;
+
+  // Clear stale data for this date then insert fresh rows in chunks
+  await mainDb.execute({ sql: 'DELETE FROM raw_tickets WHERE DAY = ?', args: [date] });
+
+  const chunkSize = 100;
+  for (let i = 0; i < tickets.length; i += chunkSize) {
+    const chunk = tickets.slice(i, i + chunkSize);
+    await mainDb.batch(
+      chunk.map(t => ({
+        sql: `INSERT INTO raw_tickets
+              (TICKET_ID, VISITOR_NAME, VISITOR_EMAIL, SUBJECT, TAGS, TICKET_STATUS,
+               PRIORITY, AGENT_EMAIL, RESOLVED_BY, FIRST_RESPONSE_DURATION_SECONDS,
+               AVG_RESPONSE_TIME_SECONDS, SPENT_TIME_SECONDS, TICKET_CSAT, AGENT_RATING,
+               MESSAGES_JSON, MESSAGE_COUNT, USER_MESSAGE_COUNT, AGENT_MESSAGE_COUNT,
+               DAY, GROUP_NAME, INITIALIZED_TIME, RESOLVED_TIME)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        args: [
+          t.TICKET_ID, t.VISITOR_NAME || null, t.VISITOR_EMAIL || null, t.SUBJECT || null,
+          t.TAGS || null, t.TICKET_STATUS || null, t.PRIORITY || null, t.AGENT_EMAIL || null,
+          t.RESOLVED_BY || null, t.FIRST_RESPONSE_DURATION_SECONDS || null,
+          t.AVG_RESPONSE_TIME_SECONDS || null, t.SPENT_TIME_SECONDS || null,
+          t.TICKET_CSAT || null, t.AGENT_RATING || null, t.MESSAGES_JSON || null,
+          t.MESSAGE_COUNT || null, t.USER_MESSAGE_COUNT || null, t.AGENT_MESSAGE_COUNT || null,
+          t.DAY || null, t.GROUP_NAME || null, t.INITIALIZED_TIME || null, t.RESOLVED_TIME || null,
+        ],
+      })),
+      'write',
+    );
+  }
+
+  await reviewsDb.execute({
+    sql: 'INSERT OR REPLACE INTO metabase_sync_log (date, synced_at, row_count) VALUES (?, ?, ?)',
+    args: [date, new Date().toISOString(), tickets.length],
+  });
+
+  console.log(`[Metabase] Synced ${tickets.length} tickets for ${date}`);
+  return tickets.length;
+}
+
+export async function ensureDateSynced(date: string): Promise<void> {
+  if (!isMetabaseEnabled) return;
+  const synced = await isDateSynced(date);
+  if (!synced) {
+    try {
+      await syncDateFromMetabase(date);
+    } catch (err: any) {
+      // Metabase unreachable (e.g. no VPN) — use whatever is already in raw_tickets
+      console.warn(`[Metabase] Sync failed for ${date}, serving existing data: ${err.message}`);
+    }
+  }
+}
+
+export async function getSyncLog(): Promise<Array<{ date: string; syncedAt: string; rowCount: number }>> {
+  await initPromise;
+  const result = await reviewsDb.execute(
+    'SELECT date, synced_at as syncedAt, row_count as rowCount FROM metabase_sync_log ORDER BY date DESC'
+  );
+  return result.rows as unknown as Array<{ date: string; syncedAt: string; rowCount: number }>;
 }
 
 export { mainDb as db };

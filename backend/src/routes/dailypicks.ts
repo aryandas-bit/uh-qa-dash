@@ -61,11 +61,14 @@ router.post('/run-audit', async (req, res) => {
       await createAgentRandomSample(String(date), String(agentEmail), dateMode as DateMode, Math.max(1, Number(count) || 10));
     }
 
-    const status = await runDailyAudit(date, dateMode as DateMode, agentEmail ? String(agentEmail) : undefined);
+    // forceReanalysis=true when randomizeSample=true: skip stored-analysis cache for fresh picks
+    const status = await runDailyAudit(date, dateMode as DateMode, agentEmail ? String(agentEmail) : undefined, Boolean(randomizeSample));
     res.json({ ...status, dateMode, agentEmail: agentEmail || null });
   } catch (error) {
     console.error('Error running daily audit:', error);
-    res.status(500).json({ error: 'Failed to start audit' });
+    const message = error instanceof Error ? error.message : 'Failed to start audit';
+    const statusCode = /gemini|GEMINI_API_KEY/i.test(message) ? 503 : 500;
+    res.status(statusCode).json({ error: message });
   }
 });
 

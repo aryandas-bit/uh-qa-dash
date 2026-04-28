@@ -49,7 +49,9 @@ export const agentsApi = {
   getReportCard: (email: string, date: string, dateMode: DateMode = 'activity') =>
     api.get(`/agents/${encodeURIComponent(email)}/report-card?date=${date}&dateMode=${dateMode}`, { timeout: 120000 }),
   auditNow: (email: string, date: string, dateMode: DateMode = 'activity', count = 10) =>
-    api.post('/agents/audit-now', { email, date, dateMode, count }, { timeout: 120000 }),
+    api.post('/agents/audit-now', { email, date, dateMode, count }, { timeout: 300000 }),
+  getAuditSummary: (date: string, dateMode: DateMode = 'activity') =>
+    api.get(`/agents/audit-summary?date=${date}&dateMode=${dateMode}`),
 };
 
 export const ticketsApi = {
@@ -62,6 +64,7 @@ export const ticketsApi = {
 
 export const analysisApi = {
   getSOPs: () => api.get('/analysis/sops'),
+  getLLMStatus: () => api.get('/analysis/llm-status'),
   getTicketAnalysis: (id: string, refresh = false, cacheOnly = false) =>
     api.get(`/analysis/ticket/${id}?refresh=${refresh}&cacheOnly=${cacheOnly}`, { timeout: 120000 }),
   batchAnalyze: (date: string, agentEmail?: string, limit = 20, dateMode: DateMode = 'activity', ticketIds?: string[], forceRefresh = false) =>
@@ -75,9 +78,25 @@ export const analysisApi = {
   getReviews: (ticketIds?: string[]) =>
     api.get(`/analysis/reviews${ticketIds?.length ? `?ticketIds=${ticketIds.join(',')}` : ''}`),
   getCachedScores: (ticketIds: string[]) =>
-    api.get(`/analysis/cached-scores${ticketIds.length ? `?ticketIds=${ticketIds.join(',')}` : ''}`),
-  getAgentInsights: (email: string, date: string, dateMode: DateMode = 'activity') =>
-    api.get(`/analysis/agent/${encodeURIComponent(email)}/insights?date=${date}&dateMode=${dateMode}`),
+    api.post('/analysis/cached-scores', { ticketIds }),
+  getAgentInsights: (email: string, date: string, dateMode: DateMode = 'activity', sampleTicketIds?: string[]) =>
+    api.get(`/analysis/agent/${encodeURIComponent(email)}/insights?date=${date}&dateMode=${dateMode}${sampleTicketIds?.length ? `&ticketIds=${sampleTicketIds.join(',')}` : ''}`),
+  adjustScore: (id: string, scoreOverride: number, adjustedBy: string, adjustmentReason?: string) =>
+    api.patch(`/analysis/ticket/${id}/score`, { scoreOverride, adjustedBy, adjustmentReason }),
+  getScoreHistory: (id: string) =>
+    api.get(`/analysis/ticket/${id}/score-history`),
+};
+
+export const dumpApi = {
+  importXlsx: (file: File, clearExisting = false) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('clearExisting', String(clearExisting));
+    return api.post('/dump/import-xlsx', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000,
+    });
+  },
 };
 
 export const customersApi = {

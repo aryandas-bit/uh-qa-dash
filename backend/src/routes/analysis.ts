@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { analyzeTicket, batchAnalyze, CustomerTicketHistory } from '../services/gemini.service.js';
 import { analyzeHybrid } from '../services/analysis-hybrid.service.js';
-import { getTicketById, getFlaggedTickets, getAgentTickets, getTicketsByIds, getCustomerHistory, getRelevantAuditMemories, saveAuditMemory, AuditMemoryRecord, TicketRow, saveQAReview, getQAReview, deleteQAReview, getQAReviewsBulk, getAllQAReviews, getAllQAReviewsWithTickets, saveTicketAnalysis, getStoredTicketAnalysis, saveQAScore, getQAScoresBulk } from '../services/database.service.js';
+import { getTicketById, getFlaggedTickets, getAgentTickets, getTicketsByIds, getCustomerHistory, getRelevantAuditMemories, saveAuditMemory, AuditMemoryRecord, TicketRow, saveQAReview, getQAReview, deleteQAReview, getQAReviewsBulk, getAllQAReviews, getAllQAReviewsWithTickets, saveTicketAnalysis, getStoredTicketAnalysis, saveQAScore, getQAScoresBulk, saveScoreOverride, getScoreAdjustmentHistory } from '../services/database.service.js';
 import { upsertReviewToSheet, deleteReviewFromSheet } from '../services/sheets.service.js';
 import { getAllSOPs, getSOPCategories } from '../services/sop.service.js';
 import NodeCache from 'node-cache';
@@ -175,6 +175,25 @@ async function getTicketAnalysisContext(ticketId: string) {
 const router = Router();
 const analysisCache = new NodeCache({ stdTTL: 86400 }); // 24 hour cache for analyses
 
+// GET /api/analysis/llm-status - Runtime LLM configuration status
+router.get('/llm-status', async (_req, res) => {
+  const geminiConfigured = Boolean(process.env.GEMINI_API_KEY?.trim());
+  const groqConfigured = Boolean(process.env.GROQ_API_KEY?.trim());
+
+  return res.json({
+    gemini: {
+      configured: geminiConfigured,
+      model: process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
+    },
+    groq: {
+      configured: groqConfigured,
+      model: process.env.GROQ_MODEL?.trim() || 'llama-3.1-8b-instant',
+    },
+    scoringAvailable: geminiConfigured,
+    checkedAt: new Date().toISOString(),
+  });
+});
+
 // Deduplicate concurrent analysis requests for the same ticket
 const inFlightAnalyses = new Map<string, Promise<any>>();
 
@@ -319,12 +338,11 @@ router.get('/ticket/:id', async (req, res) => {
     };
     await saveTicketAnalysis(id, extendedAnalysis, 'manual');
     analysisCache.set(id, extendedAnalysis);
-    // Only persist QA score if Gemini was the source (not a fallback)
-    if (!hybridResult.isFallback) {
-      saveQAScore(id, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
-        console.error('[Analysis] Failed to persist QA score:', e)
-      );
-    }
+    // Persist QA score for both Gemini and fallback analyses so downstream views
+    // (trend/report-card/review sheet sync) always have a numeric value.
+    saveQAScore(id, analysis.qaScore, analysis.summary, analysis.deductions).catch(e =>
+      console.error('[Analysis] Failed to persist QA score:', e)
+    );
 
     const review = await getQAReview(id);
 
@@ -370,12 +388,11 @@ router.post('/ticket/:id/review', async (req, res) => {
     await saveQAReview(id, status as 'approved' | 'flagged', note, reviewerName);
     const review = await getQAReview(id);
 
-    // Sync to Google Sheets (non-blocking)
     const ticket = await getTicketById(id);
     const scores = await getQAScoresBulk([id]);
     const scoreInfo = scores[id];
 
-    upsertReviewToSheet(id, status, note, reviewerName, {
+    await upsertReviewToSheet(id, status, note, reviewerName, {
       subject: ticket?.SUBJECT,
       agentEmail: ticket?.AGENT_EMAIL,
       csat: ticket?.TICKET_CSAT,
@@ -383,7 +400,7 @@ router.post('/ticket/:id/review', async (req, res) => {
       qaScore: scoreInfo?.qaScore,
       summary: scoreInfo?.summary || undefined,
       deductions: scoreInfo?.deductions?.map(d => `${d.category}: ${d.reason}`).join(' | '),
-    }).catch(err => console.error('[Sheets] Failed to sync review:', err.message));
+    });
 
     res.json({ ticketId: id, review });
   } catch (error) {
@@ -402,6 +419,62 @@ router.delete('/ticket/:id/review', async (req, res) => {
   } catch (error) {
     console.error('Error deleting review:', error);
     res.status(500).json({ error: 'Failed to delete review' });
+  }
+});
+
+// PATCH /api/analysis/ticket/:id/score - Manually adjust the QA score (requires adjustedBy)
+router.patch('/ticket/:id/score', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { scoreOverride, adjustedBy, adjustmentReason } = req.body;
+
+    if (!adjustedBy || typeof adjustedBy !== 'string' || !adjustedBy.trim()) {
+      return res.status(403).json({ error: 'adjustedBy is required — only authorized reviewers can adjust scores' });
+    }
+
+    if (scoreOverride === undefined || scoreOverride === null) {
+      return res.status(400).json({ error: 'scoreOverride required' });
+    }
+    const score = Math.min(100, Math.max(0, Math.round(Number(scoreOverride))));
+    if (isNaN(score)) return res.status(400).json({ error: 'scoreOverride must be a number' });
+
+    const { originalScore } = await saveScoreOverride(id, score, adjustedBy.trim(), adjustmentReason);
+    const review = await getQAReview(id);
+
+    // Re-sync to sheet with updated score whenever there is an existing review
+    if (review) {
+      const ticket = await getTicketById(id);
+      const scores = await getQAScoresBulk([id]);
+      const scoreInfo = scores[id];
+      upsertReviewToSheet(id, review.status as 'approved' | 'flagged', review.note ?? undefined, review.reviewerName ?? undefined, {
+        subject: ticket?.SUBJECT,
+        agentEmail: ticket?.AGENT_EMAIL,
+        csat: ticket?.TICKET_CSAT,
+        day: ticket?.DAY,
+        qaScore: score,
+        summary: scoreInfo?.summary || undefined,
+        deductions: scoreInfo?.deductions?.map(d => `${d.category}: ${d.reason}`).join(' | '),
+      }).catch(err => console.error('[Sheets] score sync failed:', err.message));
+    }
+
+    res.json({ ticketId: id, scoreOverride: score, originalScore, review });
+  } catch (error) {
+    console.error('Error saving score override:', error);
+    res.status(500).json({ error: 'Failed to save score override' });
+  }
+});
+
+// GET /api/analysis/ticket/:id/score-history - Audit trail for manual score adjustments
+router.get('/ticket/:id/score-history', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const history = await getScoreAdjustmentHistory(id);
+    const scores = await getQAScoresBulk([id]);
+    const current = scores[id] ?? null;
+    res.json({ ticketId: id, current, history });
+  } catch (error) {
+    console.error('Error fetching score history:', error);
+    res.status(500).json({ error: 'Failed to fetch score history' });
   }
 });
 
@@ -613,12 +686,16 @@ router.get('/agent/:email/summary', async (req, res) => {
 // GET /api/analysis/cached-scores - Get persisted QA scores for multiple tickets
 // Reads from the qa_scores DB table (durable) and falls back to in-memory cache
 // for tickets analyzed in the current session but not yet flushed.
-router.get('/cached-scores', async (req, res) => {
+async function handleCachedScoresRequest(ticketIdsInput: unknown, res: any) {
   try {
-    const ticketIdsParam = req.query.ticketIds as string;
-    if (!ticketIdsParam) return res.json({ scores: {}, fallbackIds: [] });
+    const ticketIdsParam = Array.isArray(ticketIdsInput)
+      ? ticketIdsInput.map((id) => String(id || '').trim()).filter(Boolean)
+      : typeof ticketIdsInput === 'string'
+      ? ticketIdsInput.split(',').map((id: string) => id.trim()).filter(Boolean)
+      : [];
+    if (ticketIdsParam.length === 0) return res.json({ scores: {}, fallbackIds: [] });
 
-    const ticketIds = ticketIdsParam.split(',').map((id: string) => id.trim()).filter(Boolean);
+    const ticketIds = ticketIdsParam;
 
     // Primary: read from the persistent DB table
     const dbScores = await getQAScoresBulk(ticketIds);
@@ -632,9 +709,14 @@ router.get('/cached-scores', async (req, res) => {
         if (cached?.qaScore !== undefined) {
           dbScores[id] = {
             qaScore: cached.qaScore,
+            originalScore: cached.qaScore,
+            hasOverride: false,
             summary: cached.summary || null,
             deductions: cached.deductions || [],
           };
+          if (cached?.isFallback) {
+            fallbackIds.push(id);
+          }
         } else if (cached?.isFallback) {
           // Analyzed but Gemini failed — triage-only provisional score
           fallbackIds.push(id);
@@ -642,6 +724,16 @@ router.get('/cached-scores', async (req, res) => {
           // Check DB for cross-session fallback state
           const stored = await getStoredTicketAnalysis(id);
           if (stored && (stored as any).isFallback) {
+            const fallbackScore = Number((stored as any).qaScore);
+            if (Number.isFinite(fallbackScore)) {
+              dbScores[id] = {
+                qaScore: fallbackScore,
+                originalScore: fallbackScore,
+                hasOverride: false,
+                summary: ((stored as any).summary as string) || null,
+                deductions: Array.isArray((stored as any).deductions) ? (stored as any).deductions : [],
+              };
+            }
             fallbackIds.push(id);
           }
         }
@@ -653,6 +745,15 @@ router.get('/cached-scores', async (req, res) => {
     console.error('Error fetching cached scores:', error);
     return res.status(500).json({ error: 'Failed to fetch scores' });
   }
+}
+
+router.get('/cached-scores', async (req, res) => {
+  return handleCachedScoresRequest(req.query.ticketIds as string | undefined, res);
+});
+
+// POST /api/analysis/cached-scores - Body-based variant for large ticketId lists
+router.post('/cached-scores', async (req, res) => {
+  return handleCachedScoresRequest(req.body?.ticketIds, res);
 });
 
 // GET /api/analysis/reviews - Get reviews for specific ticket IDs (bulk lookup) or all with ticket info
@@ -703,10 +804,15 @@ router.get('/agent/:email/insights', async (req, res) => {
 
     if (!date) return res.status(400).json({ error: 'Date parameter is required' });
 
+    // If sampleOnly ticket IDs are passed, scope insights to those only
+    const sampleFilter = req.query.ticketIds
+      ? (req.query.ticketIds as string).split(',').filter(Boolean)
+      : null;
+
     const tickets = await getAgentTickets(decodedEmail, date, 500, 0, dateMode);
     if (tickets.length === 0) return res.json({ insight: null, stats: null });
 
-    const ticketIds = tickets.map(t => String(t.TICKET_ID));
+    const ticketIds = sampleFilter || tickets.map(t => String(t.TICKET_ID));
     const scores = await getQAScoresBulk(ticketIds);
     const analyzedEntries = Object.values(scores) as Array<{ qaScore: number; summary: string | null; deductions: Array<{ category: string; points: number; reason: string }> }>;
 

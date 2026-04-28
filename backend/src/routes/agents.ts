@@ -8,6 +8,7 @@ import {
   getAgentQATrend,
   getAgentsQATrends,
   getDailyPickTicketSummaries,
+  getDailyPicksFromDb,
   getQAReviewsBulk,
   getQAScoresBulk,
   DateMode
@@ -144,7 +145,9 @@ router.post('/audit-now', async (req, res) => {
     res.json(payload);
   } catch (error) {
     console.error('Error creating audit-now sample:', error);
-    res.status(500).json({ error: 'Failed to create random audit sample' });
+    const message = error instanceof Error ? error.message : 'Failed to create random audit sample';
+    const statusCode = /gemini|GEMINI_API_KEY/i.test(message) ? 503 : 500;
+    res.status(statusCode).json({ error: message });
   }
 });
 
@@ -224,7 +227,9 @@ router.post('/:email/audit-now', async (req, res) => {
     res.json(payload);
   } catch (error) {
     console.error('Error creating audit-now sample:', error);
-    res.status(500).json({ error: 'Failed to create random audit sample' });
+    const message = error instanceof Error ? error.message : 'Failed to create random audit sample';
+    const statusCode = /gemini|GEMINI_API_KEY/i.test(message) ? 503 : 500;
+    res.status(statusCode).json({ error: message });
   }
 });
 
@@ -240,14 +245,9 @@ router.get('/:email/report-card', async (req, res) => {
       return res.status(400).json({ error: 'Date parameter is required' });
     }
 
-    const cacheKey = `agent_report_card_${decodedEmail}_${date}_${dateMode}`;
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      return res.json(cached);
-    }
-
+    // skipSync=true: treat the dump (raw_tickets already in DB) as source of truth — no Metabase auto-pull
     const [ticketResult, pickResult] = await Promise.all([
-      getAgentTickets(decodedEmail, date, 500, 0, dateMode),
+      getAgentTickets(decodedEmail, date, 500, 0, dateMode, true),
       getDailyPicks(date, 10, dateMode, { agentEmail: decodedEmail, autoGenerate: false }),
     ]);
 
@@ -264,25 +264,21 @@ router.get('/:email/report-card', async (req, res) => {
       getQAScoresBulk(sampleTicketIds),
     ]);
 
-    const missingReviews = sampleTicketIds.filter((ticketId) => !reviews[ticketId]);
-    const missingScores = sampleTicketIds.filter((ticketId) => !scores[ticketId]);
-
-    if (missingReviews.length > 0 || missingScores.length > 0) {
+    // Only require scores — reviews are optional manual QC enrichment
+    const auditedIds = sampleTicketIds.filter((ticketId) => scores[ticketId]);
+    if (auditedIds.length === 0) {
       return res.status(409).json({
-        error: 'All sampled tickets must be audited and reviewed before creating a report card',
-        missingReviews,
-        missingScores,
-        reviewedCount: sampleTicketIds.length - missingReviews.length,
-        auditedCount: sampleTicketIds.length - missingScores.length,
+        error: 'No audited tickets found — run audits first before creating a report card',
+        auditedCount: 0,
         requiredCount: sampleTicketIds.length,
       });
     }
 
-    const scoreEntries = sampleTicketIds.map((ticketId) => ({ ticketId, ...scores[ticketId] }));
+    const scoreEntries = auditedIds.map((ticketId) => ({ ticketId, ...scores[ticketId] }));
     const avgScore = scoreEntries.reduce((sum, entry) => sum + entry.qaScore, 0) / scoreEntries.length;
     const approvedCount = sampleTicketIds.filter((ticketId) => reviews[ticketId]?.status === 'approved').length;
     const flaggedCount = sampleTicketIds.filter((ticketId) => reviews[ticketId]?.status === 'flagged').length;
-    const verifiedCount = sampleTicketIds.length;
+    const verifiedCount = sampleTicketIds.filter((ticketId) => reviews[ticketId]).length;
 
     const deductionCounts: Record<string, number> = {};
     scoreEntries.forEach((entry) => {
@@ -355,10 +351,11 @@ router.get('/:email/report-card', async (req, res) => {
       dateMode,
       overallAssessment: buildOverallAssessment(avgScore, flaggedCount),
       summary: `${decodedEmail.split('@')[0].replace(/[._]/g, ' ')} handled ${ticketResult.length} tickets on ${date}. ` +
-        `The verified 10-ticket sample averaged ${Math.round(avgScore)}/100, with ${approvedCount} approved and ${flaggedCount} flagged audits.`,
+        `The ${auditedIds.length}-ticket audited sample averaged ${Math.round(avgScore)}/100` +
+        `${verifiedCount > 0 ? `, with ${approvedCount} approved and ${flaggedCount} flagged in QC review` : ''}.`,
       sample: {
         requiredCount: sampleTicketIds.length,
-        auditedCount: sampleTicketIds.length,
+        auditedCount: auditedIds.length,
         reviewedCount: verifiedCount,
         approvedCount,
         flaggedCount,
@@ -386,7 +383,6 @@ router.get('/:email/report-card', async (req, res) => {
       })),
     };
 
-    cache.set(cacheKey, reportCard, 60 * 10);
     res.json(reportCard);
   } catch (error) {
     console.error('Error generating agent report card:', error);
@@ -412,6 +408,58 @@ router.get('/defaulters', async (req, res) => {
   } catch (error) {
     console.error('Error fetching defaulters:', error);
     res.status(500).json({ error: 'Failed to fetch defaulters' });
+  }
+});
+
+// GET /api/agents/audit-summary?date=YYYY-MM-DD&dateMode=activity
+// Returns per-agent audit QA scores for the selected date's sample
+router.get('/audit-summary', async (req, res) => {
+  try {
+    const date = req.query.date as string;
+    const dateMode = ((req.query.dateMode as string) || 'activity') as DateMode;
+    if (!date) return res.status(400).json({ error: 'date is required' });
+
+    const allPicks = await getDailyPicksFromDb(date, dateMode);
+    if (allPicks.length === 0) {
+      return res.json({ agents: [], overall: { totalAudited: 0, avgQaScore: null, agentCount: 0 } });
+    }
+
+    const allTicketIds = allPicks.map(p => p.ticketId);
+    const scores = await getQAScoresBulk(allTicketIds);
+
+    const agentMap = new Map<string, { picks: typeof allPicks; qaScores: number[] }>();
+    for (const pick of allPicks) {
+      if (!agentMap.has(pick.agentEmail)) agentMap.set(pick.agentEmail, { picks: [], qaScores: [] });
+      const entry = agentMap.get(pick.agentEmail)!;
+      entry.picks.push(pick);
+      const s = (scores as any)[pick.ticketId];
+      if (s && typeof s.qaScore === 'number') entry.qaScores.push(s.qaScore);
+    }
+
+    const agents = Array.from(agentMap.entries()).map(([agentEmail, data]) => ({
+      agentEmail,
+      sampleSize: data.picks.length,
+      auditedCount: data.picks.filter(p => p.analyzed).length,
+      avgQaScore: data.qaScores.length > 0
+        ? Math.round(data.qaScores.reduce((a, b) => a + b, 0) / data.qaScores.length * 10) / 10
+        : null,
+      lowScoreCount: data.qaScores.filter(s => s < 60).length,
+      scores: data.qaScores,
+    })).sort((a, b) => (b.avgQaScore ?? 0) - (a.avgQaScore ?? 0));
+
+    const allQaScores = agents.flatMap(a => a.scores);
+    const overall = {
+      totalAudited: agents.reduce((sum, a) => sum + a.auditedCount, 0),
+      avgQaScore: allQaScores.length > 0
+        ? Math.round(allQaScores.reduce((a, b) => a + b, 0) / allQaScores.length * 10) / 10
+        : null,
+      agentCount: agents.filter(a => a.auditedCount > 0).length,
+    };
+
+    res.json({ agents, overall });
+  } catch (error) {
+    console.error('Error fetching audit summary:', error);
+    res.status(500).json({ error: 'Failed to fetch audit summary' });
   }
 });
 

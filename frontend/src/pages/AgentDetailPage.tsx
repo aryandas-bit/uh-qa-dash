@@ -2,25 +2,27 @@ import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle,
   ArrowLeft,
   Calendar,
   CalendarCheck,
   CheckCircle,
   Copy,
   ChevronDown,
-  Clock,
+  ClipboardCheck,
   Download,
   FileText,
   Flag,
   Layers3,
   Loader2,
   Mail,
+  Minus,
+  Plus,
   Skull,
   Sparkles,
   ThumbsUp,
   Ticket,
   TrendingDown,
+  UserCheck,
 } from 'lucide-react';
 import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -41,6 +43,8 @@ interface AgentTicketRow {
 
 interface ScoreEntry {
   qaScore: number;
+  originalScore: number;
+  hasOverride: boolean;
   summary: string | null;
   deductions: Array<{ category: string; points: number; reason: string }>;
 }
@@ -50,6 +54,19 @@ interface QAReview {
   note: string | null;
   reviewerName?: string | null;
   reviewedAt?: string;
+}
+
+interface LLMStatus {
+  gemini: {
+    configured: boolean;
+    model: string;
+  };
+  groq: {
+    configured: boolean;
+    model: string;
+  };
+  scoringAvailable: boolean;
+  checkedAt: string;
 }
 
 interface AgentDailyPick {
@@ -139,6 +156,9 @@ export default function AgentDetailPage() {
   const queryClient = useQueryClient();
   const [reportCard, setReportCard] = useState<ReportCard | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [insightsEnabled, setInsightsEnabled] = useState(false);
+  const [adjusterName, setAdjusterName] = useState('');
+  const [adjustingTicketId, setAdjustingTicketId] = useState<string | null>(null);
   const { selectedDate, setSelectedDate, dateMode: storeDateMode, setDateMode: setStoreDateMode } = useDateStore();
 
   const { data: datesData } = useQuery({
@@ -152,6 +172,8 @@ export default function AgentDetailPage() {
   const urlDateMode = searchParams.get('dateMode') as DateMode;
   const date = urlDate || selectedDate || latestDate;
   const dateMode = urlDateMode || storeDateMode || 'activity';
+  const decodedEmail = decodeURIComponent(email || '');
+  const agentName = decodedEmail.split('@')[0].replace(/[._]/g, ' ').replace(/_ext$/, '');
 
   useEffect(() => {
     if (urlDate && urlDate !== selectedDate) setSelectedDate(urlDate);
@@ -166,8 +188,9 @@ export default function AgentDetailPage() {
     }
   }, [latestDate, selectedDate, urlDate, datesData, setSelectedDate]);
 
-  const decodedEmail = decodeURIComponent(email || '');
-  const agentName = decodedEmail.split('@')[0].replace(/[._]/g, ' ').replace(/_ext$/, '');
+  useEffect(() => {
+    setInsightsEnabled(false);
+  }, [decodedEmail, date, dateMode]);
 
   const { data: ticketsData, isLoading: ticketsLoading } = useQuery({
     queryKey: ['agent-tickets', decodedEmail, date, dateMode],
@@ -198,6 +221,10 @@ export default function AgentDetailPage() {
     .filter((ticket) => isResolvedStatus(ticket.TICKET_STATUS))
     .map((ticket) => String(ticket.TICKET_ID));
 
+  // Include sample pick IDs in score queries — picks may include non-resolved tickets
+  const sampleTicketIdsForQuery = (picksData?.picks || []).map((p: any) => String(p.ticketId));
+  const scoreQueryIds = [...new Set([...relevantTicketIds, ...sampleTicketIdsForQuery])];
+
   const { data: reviewsData } = useQuery({
     queryKey: ['reviews', relevantTicketIds.join(',')],
     queryFn: () => analysisApi.getReviews(relevantTicketIds),
@@ -207,21 +234,21 @@ export default function AgentDetailPage() {
   const reviews: Record<string, QAReview> = reviewsData?.data?.reviews || {};
 
   const { data: scoresData } = useQuery({
-    queryKey: ['cached-scores', relevantTicketIds.join(',')],
-    queryFn: () => analysisApi.getCachedScores(relevantTicketIds),
-    enabled: relevantTicketIds.length > 0,
+    queryKey: ['cached-scores', scoreQueryIds.join(',')],
+    queryFn: () => analysisApi.getCachedScores(scoreQueryIds),
+    enabled: scoreQueryIds.length > 0,
     staleTime: 1000 * 10,
-    refetchInterval: auditStatusData?.inProgress ? 3000 : false,
+    // Poll while audit is running or picks exist (catches delayed score saves after mutation)
+    refetchInterval: (auditStatusData?.inProgress || sampleTicketIdsForQuery.length > 0) ? 4000 : false,
   });
   const cachedScores: Record<string, ScoreEntry> = scoresData?.data?.scores || {};
   const fallbackIds: Set<string> = new Set(scoresData?.data?.fallbackIds || []);
 
-  const { data: insightsData } = useQuery({
-    queryKey: ['agent-insights', decodedEmail, date, dateMode],
-    queryFn: () => analysisApi.getAgentInsights(decodedEmail, date, dateMode),
-    enabled: !!decodedEmail && !!date,
+  const { data: insightsData, isFetching: insightsFetching } = useQuery({
+    queryKey: ['agent-insights', decodedEmail, date, dateMode, sampleTicketIdsForQuery.join(',')],
+    queryFn: () => analysisApi.getAgentInsights(decodedEmail, date, dateMode, sampleTicketIdsForQuery.length > 0 ? sampleTicketIdsForQuery : undefined),
+    enabled: !!decodedEmail && !!date && insightsEnabled,
     staleTime: 1000 * 60,
-    refetchInterval: auditStatusData?.inProgress ? 4000 : false,
   });
   const insightsResult = insightsData?.data;
 
@@ -232,6 +259,14 @@ export default function AgentDetailPage() {
     staleTime: 1000 * 60 * 5,
   });
   const trend = trendData?.data?.trend || [];
+
+  const { data: llmStatusData, isLoading: llmStatusLoading } = useQuery({
+    queryKey: ['llm-status'],
+    queryFn: () => analysisApi.getLLMStatus().then((response) => response.data as LLMStatus),
+    staleTime: 1000 * 60,
+    refetchInterval: 1000 * 60 * 2,
+  });
+  const geminiAvailable = llmStatusData?.gemini?.configured !== false;
 
   const handleDateChange = (newDate: string) => {
     setSearchParams({ date: newDate, dateMode });
@@ -264,16 +299,6 @@ export default function AgentDetailPage() {
 
   const totalTickets = tickets.length;
   const resolvedCount = tickets.filter((ticket) => isResolvedStatus(ticket.TICKET_STATUS)).length;
-  const validResponseTimes = tickets
-    .map((ticket) => Number(ticket.FIRST_RESPONSE_DURATION_SECONDS))
-    .filter((value) => Number.isFinite(value) && value > 0 && value < 86400);
-  const avgResponseTime = validResponseTimes.length > 0
-    ? Math.round(validResponseTimes.reduce((sum, value) => sum + value, 0) / validResponseTimes.length)
-    : null;
-  const lowCsatCount = tickets.filter((ticket) => {
-    const numericCsat = Number(ticket.TICKET_CSAT);
-    return Number.isFinite(numericCsat) && numericCsat > 0 && numericCsat < 3;
-  }).length;
 
   const issueBreakdown = sampleRows.reduce<Record<string, number>>((acc, row) => {
     const subject = row.pick.ticket?.subject || 'Unknown';
@@ -285,31 +310,42 @@ export default function AgentDetailPage() {
     .slice(0, 15) as [string, number][];
 
   const sampleAuditedCount = sampleRows.filter((row) => row.score).length;
+  const auditedScores = sampleRows.filter((row) => row.score).map((row) => row.score!.qaScore);
+  const sampleAvgQaScore = auditedScores.length > 0
+    ? Math.round(auditedScores.reduce((sum, s) => sum + s, 0) / auditedScores.length)
+    : null;
   const sampleReviewedCount = sampleRows.filter((row) => row.review).length;
   const sampleApprovedCount = sampleRows.filter((row) => row.review?.status === 'approved').length;
   const sampleFlaggedCount = sampleRows.filter((row) => row.review?.status === 'flagged').length;
-  const reportReady = sampleRows.length > 0 && sampleRows.every((row) => row.score && row.review);
+  const reportReady = sampleAuditedCount > 0;
+  const refreshAuditQueries = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode, decodedEmail] }),
+      queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode, decodedEmail] }),
+      queryClient.invalidateQueries({ queryKey: ['audit-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['cached-scores'] }),
+      queryClient.invalidateQueries({ queryKey: ['reviews'] }),
+      queryClient.invalidateQueries({ queryKey: ['agent-insights'] }),
+    ]);
+  };
 
   const auditNowMutation = useMutation({
     mutationFn: async () => {
-      const response = await dailyPicksApi.runAudit(date, dateMode, {
-        agentEmail: decodedEmail,
-        count: 10,
-        randomizeSample: true,
-      });
+      if (!date) {
+        throw new Error('No date selected for audit run');
+      }
+      const response = await agentsApi.auditNow(decodedEmail, date, dateMode, 10);
       return response.data;
     },
     onSuccess: async () => {
       setReportCard(null);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['daily-picks', date, dateMode, decodedEmail] }),
-        queryClient.invalidateQueries({ queryKey: ['daily-picks-status', date, dateMode, decodedEmail] }),
-        queryClient.invalidateQueries({ queryKey: ['cached-scores', relevantTicketIds.join(',')] }),
-        queryClient.invalidateQueries({ queryKey: ['reviews', relevantTicketIds.join(',')] }),
-        queryClient.invalidateQueries({ queryKey: ['agent-insights', decodedEmail, date, dateMode] }),
-      ]);
+      setInsightsEnabled(false);
+    },
+    onSettled: async () => {
+      await refreshAuditQueries();
     },
   });
+  const runAuditsDisabled = auditNowMutation.isPending || !date || !decodedEmail || !geminiAvailable;
 
   const reportCardMutation = useMutation({
     mutationFn: async () => {
@@ -318,6 +354,18 @@ export default function AgentDetailPage() {
     },
     onSuccess: (data) => {
       setReportCard(data);
+    },
+  });
+
+  const adjustScoreMutation = useMutation({
+    mutationFn: async ({ ticketId, newScore }: { ticketId: string; newScore: number }) => {
+      const response = await analysisApi.adjustScore(ticketId, newScore, adjusterName.trim());
+      return response.data;
+    },
+    onMutate: ({ ticketId }) => setAdjustingTicketId(ticketId),
+    onSettled: async () => {
+      setAdjustingTicketId(null);
+      await queryClient.invalidateQueries({ queryKey: ['cached-scores'] });
     },
   });
 
@@ -409,6 +457,14 @@ export default function AgentDetailPage() {
     } catch (error) {
       console.error('Failed to copy report card:', error);
     }
+  };
+
+
+  const getDeductionReason = (ticketId: string, category: 'opening' | 'process' | 'chat_handling' | 'closing' | 'fatal') => {
+    const entry = cachedScores[String(ticketId)];
+    if (!entry?.deductions?.length) return 'NA';
+    const reason = entry.deductions.find((item) => String(item.category || '').toLowerCase() === category)?.reason;
+    return reason || 'NA';
   };
 
   const ReviewBadge = ({ ticketId }: { ticketId: string }) => {
@@ -532,89 +588,156 @@ export default function AgentDetailPage() {
           </div>
         </div>
         <div className="card flex items-center gap-4">
-          <div className="p-3 rounded-xl bg-uh-cyan/20">
-            <Clock size={24} className="text-uh-cyan" />
+          <div className="p-3 rounded-xl bg-uh-purple/20">
+            <Sparkles size={24} className="text-uh-purple" />
           </div>
           <div>
-            <p className="text-slate-500 text-sm">Avg Response</p>
-            <p className="text-3xl font-bold">{formatTime(avgResponseTime)}</p>
+            <p className="text-slate-500 text-sm">Avg QA Score</p>
+            <p className={`text-3xl font-bold ${
+              sampleAvgQaScore === null ? 'text-slate-300' :
+              sampleAvgQaScore >= 80 ? 'text-uh-success' :
+              sampleAvgQaScore >= 60 ? 'text-uh-warning' : 'text-uh-error'
+            }`}>
+              {sampleAvgQaScore ?? '—'}
+            </p>
+            <p className="text-xs text-slate-400">audited sample</p>
           </div>
         </div>
         <div className="card flex items-center gap-4">
-          <div className="p-3 rounded-xl bg-uh-error/20">
-            <AlertTriangle size={24} className="text-uh-error" />
+          <div className="p-3 rounded-xl bg-uh-cyan/20">
+            <ClipboardCheck size={24} className="text-uh-cyan" />
           </div>
           <div>
-            <p className="text-slate-500 text-sm">Low CSAT</p>
-            <p className="text-3xl font-bold">{lowCsatCount}</p>
+            <p className="text-slate-500 text-sm">Audited Today</p>
+            <p className="text-3xl font-bold">{sampleAuditedCount}</p>
+            {sampleRows.length > 0 && (
+              <p className="text-xs text-slate-400">of {sampleRows.length} sampled</p>
+            )}
           </div>
         </div>
       </div>
 
-      {insightsResult?.stats && (
-        <div className="card mb-6 bg-gradient-to-br from-uh-purple/5 to-uh-cyan/5 border border-uh-purple/10">
-          <div className="flex items-start gap-3">
-            <div className="p-2 rounded-xl bg-uh-purple/20 shrink-0">
-              <Sparkles size={18} className="text-uh-purple" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-2">
+      <div className="card mb-6 bg-gradient-to-br from-uh-purple/5 to-uh-cyan/5 border border-uh-purple/10">
+        <div className="flex items-start gap-3">
+          <div className="p-2 rounded-xl bg-uh-purple/20 shrink-0">
+            <Sparkles size={18} className="text-uh-purple" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+              <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold">AI Insights</h3>
-                <span className="text-[10px] uppercase tracking-wide text-slate-400">
-                  Groq · {insightsResult.stats.analyzedCount}/{insightsResult.stats.totalTickets} audited
-                </span>
-              </div>
-              {insightsResult.insight ? (
-                <p className="text-sm text-slate-700 leading-relaxed">{insightsResult.insight}</p>
-              ) : insightsResult.stats.analyzedCount === 0 ? (
-                <p className="text-sm text-slate-500">Audit the 10-ticket sample below to unlock day-level insights and report card generation.</p>
-              ) : (
-                <p className="text-sm text-slate-500">Insight unavailable right now, but the audited sample is ready for manual review.</p>
-              )}
-              {insightsResult.stats.analyzedCount > 0 && (
-                <div className="flex items-center gap-4 mt-3 text-xs flex-wrap">
-                  <span className="flex items-center gap-1">
-                    <span className="font-semibold text-slate-700">Avg QA:</span>
-                    <span className={`font-bold ${
-                      (insightsResult.stats.avgScore ?? 0) >= 80 ? 'text-uh-success' :
-                      (insightsResult.stats.avgScore ?? 0) >= 60 ? 'text-uh-warning' : 'text-uh-error'
-                    }`}>
-                      {insightsResult.stats.avgScore ?? '—'}
-                    </span>
+                {insightsResult?.stats && (
+                  <span className="text-[10px] uppercase tracking-wide text-slate-400">
+                    Sample · {insightsResult.stats.analyzedCount}/{insightsResult.stats.totalTickets} audited
                   </span>
-                  {insightsResult.stats.lowScoreCount > 0 && (
-                    <span className="flex items-center gap-1 text-uh-error">
-                      <TrendingDown size={12} />
-                      {insightsResult.stats.lowScoreCount} low-score
-                    </span>
-                  )}
-                  {insightsResult.stats.topDeductionCategories?.length > 0 && (
-                    <span className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-slate-500">Top misses:</span>
-                      {insightsResult.stats.topDeductionCategories.slice(0, 3).map((item: any) => (
-                        <span key={item.category} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] capitalize">
-                          {item.category} <span className="font-semibold">×{item.count}</span>
-                        </span>
-                      ))}
-                    </span>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {insightsResult?.insight && !insightsFetching && (
+                  <button
+                    onClick={() => {
+                      queryClient.invalidateQueries({ queryKey: ['agent-insights'] });
+                    }}
+                    className="text-xs text-slate-400 hover:text-uh-purple transition-colors"
+                  >
+                    Refresh
+                  </button>
+                )}
+                {!insightsEnabled && (
+                  <button
+                    onClick={() => setInsightsEnabled(true)}
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-uh-purple text-white hover:bg-uh-purple/90 transition-all"
+                  >
+                    <Sparkles size={12} />
+                    Generate Insights
+                  </button>
+                )}
+              </div>
             </div>
+            {!insightsEnabled ? (
+              <p className="text-sm text-slate-500">
+                Click "Generate Insights" to get AI analysis of the audited sample tickets.
+              </p>
+            ) : insightsFetching ? (
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <Loader2 size={14} className="animate-spin text-uh-purple" />
+                Analyzing audited sample...
+              </div>
+            ) : insightsResult?.insight ? (
+              <p className="text-sm text-slate-700 leading-relaxed">{insightsResult.insight}</p>
+            ) : insightsResult?.stats?.analyzedCount === 0 ? (
+              <p className="text-sm text-slate-500">Audit the 10-ticket sample below to unlock day-level insights and report card generation.</p>
+            ) : (
+              <p className="text-sm text-slate-500">Insight unavailable right now. Try refreshing after auditing more tickets.</p>
+            )}
+            {insightsResult?.stats?.analyzedCount > 0 && (
+              <div className="flex items-center gap-4 mt-3 text-xs flex-wrap">
+                <span className="flex items-center gap-1">
+                  <span className="font-semibold text-slate-700">Avg QA:</span>
+                  <span className={`font-bold ${
+                    (insightsResult.stats.avgScore ?? 0) >= 80 ? 'text-uh-success' :
+                    (insightsResult.stats.avgScore ?? 0) >= 60 ? 'text-uh-warning' : 'text-uh-error'
+                  }`}>
+                    {insightsResult.stats.avgScore ?? '—'}
+                  </span>
+                </span>
+                {insightsResult.stats.lowScoreCount > 0 && (
+                  <span className="flex items-center gap-1 text-uh-error">
+                    <TrendingDown size={12} />
+                    {insightsResult.stats.lowScoreCount} low-score
+                  </span>
+                )}
+                {insightsResult.stats.topDeductionCategories?.length > 0 && (
+                  <span className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-slate-500">Top misses:</span>
+                    {insightsResult.stats.topDeductionCategories.slice(0, 3).map((item: any) => (
+                      <span key={item.category} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] capitalize">
+                        {item.category} <span className="font-semibold">×{item.count}</span>
+                      </span>
+                    ))}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
-      )}
+      </div>
 
       <div className="card mb-6 border border-uh-purple/10 bg-gradient-to-br from-white via-white to-uh-purple/5">
         <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
           <div>
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <Layers3 size={18} className="text-uh-purple" />
-              Daily Audit Sample
+              New Daily Order
             </h2>
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              {llmStatusLoading ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">
+                  Checking LLM status...
+                </span>
+              ) : geminiAvailable ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-uh-success/10 text-uh-success border border-uh-success/20">
+                  Gemini scoring ready
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-uh-error/10 text-uh-error border border-uh-error/20">
+                  Gemini scoring unavailable
+                </span>
+              )}
+              {!!llmStatusData?.gemini?.model && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600">
+                  {llmStatusData.gemini.model}
+                </span>
+              )}
+            </div>
             <p className="text-sm text-slate-500 mt-1">
-              Click `Run Audits` to instantly create a random 10-ticket sample for this agent, start auditing it right away, and refresh the Groq summary on this page.
+              Click "Run Audits" to generate a random 10-ticket sample, score each ticket with Gemini, and refresh AI insights scoped to this sample.
             </p>
+            {!geminiAvailable && !llmStatusLoading && (
+              <p className="text-xs text-uh-error mt-2">
+                Set <code>GEMINI_API_KEY</code> in backend environment variables, then restart/redeploy backend to enable QA scoring.
+              </p>
+            )}
             {auditStatusData?.inProgress && (
               <p className="text-xs text-uh-purple mt-2 flex items-center gap-1.5">
                 <Loader2 size={12} className="animate-spin" />
@@ -625,7 +748,7 @@ export default function AgentDetailPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={() => auditNowMutation.mutate()}
-              disabled={auditNowMutation.isPending}
+              disabled={runAuditsDisabled}
               className="btn-primary flex items-center gap-2 text-sm !px-4 !py-2.5 disabled:opacity-50"
             >
               {auditNowMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
@@ -660,7 +783,7 @@ export default function AgentDetailPage() {
           </span>
           {!reportReady && sampleRows.length > 0 && (
             <span className="text-xs text-slate-400">
-              Report card unlocks after all sampled tickets have both an audit and a manual review.
+              Report card unlocks after at least one ticket is audited.
             </span>
           )}
         </div>
@@ -677,67 +800,129 @@ export default function AgentDetailPage() {
           </div>
         )}
 
+        {sampleRows.length > 0 && (
+          <div className="flex items-center gap-2 mb-3 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+            <UserCheck size={13} className="text-uh-purple shrink-0" />
+            <input
+              type="text"
+              value={adjusterName}
+              onChange={(e) => setAdjusterName(e.target.value)}
+              placeholder="Your name to enable score ±1 adjustments"
+              className="text-xs px-2 py-1 rounded border border-slate-200 bg-white text-slate-700 flex-1 max-w-xs focus:outline-none focus:ring-1 focus:ring-uh-purple/50"
+            />
+            {adjusterName.trim() && (
+              <span className="text-[10px] text-uh-purple font-medium">Score editing active</span>
+            )}
+          </div>
+        )}
+
         {sampleRows.length === 0 ? (
-          <p className="text-sm text-slate-400">No sample exists yet for this agent on this date. Click `Run Audits` to generate one instantly.</p>
+          <p className="text-sm text-slate-400">No daily order sample exists yet for this agent on this date. Click "Run Audits" to generate one instantly.</p>
         ) : (
           <div className="space-y-3">
-            {sampleRows.map((row) => (
-              <Link
-                key={row.pick.ticketId}
-                to={`/ticket/${row.pick.ticketId}`}
-                className="block p-4 rounded-xl bg-slate-50 hover:bg-slate-100 transition-all"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                      <span className="text-uh-cyan font-mono text-xs">#{row.pick.ticketId}</span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-200 text-slate-700">
-                        Pick {row.pick.pickOrder}
-                      </span>
-                      {row.pick.pickReason && (
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                          row.pick.pickReason === 'High Risk'
-                            ? 'bg-uh-error/10 text-uh-error border border-uh-error/20'
-                            : 'bg-uh-cyan/10 text-uh-cyan border border-uh-cyan/20'
-                        }`}>
-                          {row.pick.pickReason}
-                        </span>
-                      )}
-                      <ReviewBadge ticketId={String(row.pick.ticketId)} />
-                      {!row.review && row.score && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-uh-warning/10 text-uh-warning">
-                          Review pending
-                        </span>
-                      )}
-                      {!row.score && fallbackIds.has(String(row.pick.ticketId)) && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-uh-warning/15 text-uh-warning border border-uh-warning/30">
-                          Triage-only — Gemini unavailable
-                        </span>
-                      )}
-                      {!row.score && !fallbackIds.has(String(row.pick.ticketId)) && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-200 text-slate-500">
-                          Audit pending
-                        </span>
-                      )}
+            {sampleRows.map((row) => {
+              const tid = String(row.pick.ticketId);
+              const effectiveScore = cachedScores[tid]?.qaScore;
+              const hasOverride = cachedScores[tid]?.hasOverride ?? false;
+              const originalScore = cachedScores[tid]?.originalScore;
+              const isAdjustingThis = adjustingTicketId === tid && adjustScoreMutation.isPending;
+              const canAdjustThis = adjusterName.trim().length > 0 && effectiveScore != null;
+
+              return (
+                <div key={tid} className="relative rounded-xl bg-slate-50 hover:bg-slate-100 transition-all">
+                  <Link
+                    to={`/ticket/${tid}`}
+                    className="block p-4 pr-28"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                          <span className="text-uh-cyan font-mono text-xs">#{tid}</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-200 text-slate-700">
+                            Pick {row.pick.pickOrder}
+                          </span>
+                          {row.pick.pickReason && (
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                              row.pick.pickReason === 'High Risk'
+                                ? 'bg-uh-error/10 text-uh-error border border-uh-error/20'
+                                : 'bg-uh-cyan/10 text-uh-cyan border border-uh-cyan/20'
+                            }`}>
+                              {row.pick.pickReason}
+                            </span>
+                          )}
+                          <ReviewBadge ticketId={tid} />
+                          {!row.review && row.score && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-uh-warning/10 text-uh-warning">
+                              Review pending
+                            </span>
+                          )}
+                          {fallbackIds.has(tid) && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-uh-warning/15 text-uh-warning border border-uh-warning/30">
+                              Provisional — Gemini fallback
+                            </span>
+                          )}
+                          {!row.score && !fallbackIds.has(tid) && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-200 text-slate-500">
+                              Audit pending
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm font-medium text-slate-800 truncate">
+                          {row.ticket?.SUBJECT || row.pick.ticket?.subject || 'No subject'}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1 truncate">
+                          {row.ticket?.VISITOR_EMAIL || row.pick.ticket?.customerEmail || 'No customer email'}
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-sm font-medium text-slate-800 truncate">
-                      {row.ticket?.SUBJECT || row.pick.ticket?.subject || 'No subject'}
-                    </p>
-                    <p className="text-xs text-slate-400 mt-1 truncate">
-                      {row.ticket?.VISITOR_EMAIL || row.pick.ticket?.customerEmail || 'No customer email'}
-                    </p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="mb-2">
-                      <ScorePill ticketId={String(row.pick.ticketId)} />
-                    </div>
+                  </Link>
+
+                  {/* Score + adjustment controls — outside Link to prevent navigation */}
+                  <div className="absolute right-3 top-3 flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
+                    {canAdjustThis ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => adjustScoreMutation.mutate({ ticketId: tid, newScore: Math.max(0, Math.round(effectiveScore!) - 1) })}
+                          disabled={isAdjustingThis || effectiveScore === 0}
+                          className="w-6 h-6 rounded-lg bg-white border border-slate-200 hover:border-uh-error/40 hover:bg-uh-error/5 text-slate-500 flex items-center justify-center disabled:opacity-30 transition-colors shadow-sm"
+                          title="Decrease score by 1"
+                        >
+                          <Minus size={10} />
+                        </button>
+                        <div className="text-center min-w-[48px]">
+                          {isAdjustingThis ? (
+                            <Loader2 size={12} className="animate-spin text-uh-purple mx-auto" />
+                          ) : (
+                            <span className={`text-sm font-bold ${
+                              effectiveScore >= 80 ? 'text-uh-success' :
+                              effectiveScore >= 60 ? 'text-uh-warning' : 'text-uh-error'
+                            } ${hasOverride ? 'underline decoration-dotted' : ''}`}>
+                              {Math.round(effectiveScore)}
+                            </span>
+                          )}
+                          {hasOverride && originalScore != null && (
+                            <div className="text-[9px] text-slate-400 leading-tight">{Math.round(originalScore)} orig</div>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => adjustScoreMutation.mutate({ ticketId: tid, newScore: Math.min(100, Math.round(effectiveScore!) + 1) })}
+                          disabled={isAdjustingThis || effectiveScore === 100}
+                          className="w-6 h-6 rounded-lg bg-white border border-slate-200 hover:border-uh-success/40 hover:bg-uh-success/5 text-slate-500 flex items-center justify-center disabled:opacity-30 transition-colors shadow-sm"
+                          title="Increase score by 1"
+                        >
+                          <Plus size={10} />
+                        </button>
+                      </div>
+                    ) : (
+                      <ScorePill ticketId={tid} />
+                    )}
                     <p className="text-xs text-slate-400">
                       {formatTime(row.ticket?.FIRST_RESPONSE_DURATION_SECONDS ?? row.pick.ticket?.responseTimeSeconds ?? null)}
                     </p>
                   </div>
                 </div>
-              </Link>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -781,87 +966,134 @@ export default function AgentDetailPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
-            <div className="p-3 rounded-xl bg-slate-50">
-              <p className="text-xs text-slate-400 mb-1">Sample Avg QA</p>
-              <p className="text-2xl font-bold">{reportCard.sample.avgQaScore}</p>
-            </div>
-            <div className="p-3 rounded-xl bg-slate-50">
-              <p className="text-xs text-slate-400 mb-1">Verified Sample</p>
-              <p className="text-2xl font-bold">{reportCard.sample.reviewedCount}/{reportCard.sample.requiredCount}</p>
-            </div>
-            <div className="p-3 rounded-xl bg-slate-50">
-              <p className="text-xs text-slate-400 mb-1">Approved</p>
-              <p className="text-2xl font-bold text-uh-success">{reportCard.sample.approvedCount}</p>
-            </div>
-            <div className="p-3 rounded-xl bg-slate-50">
-              <p className="text-xs text-slate-400 mb-1">Flagged</p>
-              <p className="text-2xl font-bold text-uh-error">{reportCard.sample.flaggedCount}</p>
-            </div>
+          <div className="flex items-center gap-3 mb-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
+            <UserCheck size={14} className="text-uh-purple shrink-0" />
+            <label className="text-xs text-slate-500 whitespace-nowrap font-medium">Reviewer name:</label>
+            <input
+              type="text"
+              value={adjusterName}
+              onChange={(e) => setAdjusterName(e.target.value)}
+              placeholder="Enter your name to enable score adjustments"
+              className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 flex-1 max-w-xs focus:outline-none focus:ring-1 focus:ring-uh-purple/50"
+            />
+            {adjusterName.trim() ? (
+              <span className="text-[10px] text-uh-purple font-medium">± Use +/− buttons in Final Score column to adjust</span>
+            ) : (
+              <span className="text-[10px] text-slate-400">Score adjustments are saved and synced to the sheet</span>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div>
-              <h3 className="text-sm font-semibold text-slate-700 mb-2">Strengths</h3>
-              <div className="space-y-2">
-                {reportCard.strengths.map((item) => (
-                  <div key={item} className="p-3 rounded-xl bg-uh-success/5 border border-uh-success/10 text-sm text-slate-700">
-                    {item}
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-slate-700 mb-2">Coaching Priorities</h3>
-              <div className="space-y-2">
-                {reportCard.coachingPriorities.map((item) => (
-                  <div key={item} className="p-3 rounded-xl bg-uh-warning/5 border border-uh-warning/10 text-sm text-slate-700">
-                    {item}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full text-xs min-w-[1300px] border-collapse">
+              <thead>
+                <tr className="bg-[#5b3f88] text-white">
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Month</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Associate</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Ticket ID</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Opening</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Process Miss</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Chat Handling</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Closing</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">DSAT Reason</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Fatal</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Feedback</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Score</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Final Score</th>
+                  <th className="px-3 py-2 border border-[#4a3270] font-semibold">Comments</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reportCard.reviewedSample.map((item) => {
+                  const ticketId = String(item.ticketId);
+                  const ticket = sampleRows.find((row) => String(row.pick.ticketId) === ticketId)?.ticket;
+                  const numericCsat = Number(ticket?.TICKET_CSAT);
+                  const dsatReason = Number.isFinite(numericCsat) && numericCsat > 0 && numericCsat <= 2
+                    ? 'Low CSAT'
+                    : 'NA';
+                  const feedback = cachedScores[ticketId]?.summary || 'NA';
+                  // Use the effective score from cachedScores (applies score_override when present)
+                  const effectiveScore = cachedScores[ticketId]?.qaScore ?? item.qaScore;
+                  const originalScore = cachedScores[ticketId]?.originalScore;
+                  const hasOverride = cachedScores[ticketId]?.hasOverride ?? false;
+                  const isAdjusting = adjustingTicketId === ticketId && adjustScoreMutation.isPending;
+                  const canAdjust = adjusterName.trim().length > 0 && effectiveScore != null;
+                  const month = date
+                    ? new Date(`${date}T00:00:00`).toLocaleString('en-US', { month: 'short' })
+                    : 'NA';
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-            <div>
-              <h3 className="text-sm font-semibold text-slate-700 mb-2">Top Miss Categories</h3>
-              <div className="space-y-2">
-                {reportCard.topDeductionCategories.length === 0 ? (
-                  <p className="text-sm text-slate-400">No recurring miss categories in the verified sample.</p>
-                ) : reportCard.topDeductionCategories.map((item) => (
-                  <div key={item.category} className="flex items-center justify-between p-3 rounded-xl bg-slate-50">
-                    <span className="text-sm text-slate-700">{item.label}</span>
-                    <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-uh-purple/10 text-uh-purple">
-                      ×{item.count}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-slate-700 mb-2">Flagged Tickets</h3>
-              <div className="space-y-2">
-                {reportCard.flaggedTickets.length === 0 ? (
-                  <p className="text-sm text-slate-400">No flagged sample tickets in this report card.</p>
-                ) : reportCard.flaggedTickets.map((item) => (
-                  <Link
-                    key={item.ticketId}
-                    to={`/ticket/${item.ticketId}`}
-                    className="block p-3 rounded-xl bg-slate-50 hover:bg-slate-100 transition-all"
-                  >
-                    <div className="flex items-center justify-between gap-3 mb-1">
-                      <span className="text-uh-cyan font-mono text-xs">#{item.ticketId}</span>
-                      <span className="text-xs font-semibold text-uh-error">{item.qaScore ?? '—'}</span>
-                    </div>
-                    <p className="text-sm text-slate-700 truncate">{item.subject}</p>
-                    {(item.reviewNote || item.deductionSummary) && (
-                      <p className="text-xs text-slate-400 mt-1 truncate">{item.reviewNote || item.deductionSummary}</p>
-                    )}
-                  </Link>
-                ))}
-              </div>
-            </div>
+                  return (
+                    <tr key={ticketId} className="odd:bg-slate-50 even:bg-white text-slate-700">
+                      <td className="px-3 py-2 border border-slate-200 text-center">{month}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{formatAgentName(decodedEmail)}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">
+                        <Link to={`/ticket/${ticketId}`} className="text-uh-cyan hover:underline font-medium">
+                          {ticketId}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{getDeductionReason(ticketId, 'opening')}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{getDeductionReason(ticketId, 'process')}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{getDeductionReason(ticketId, 'chat_handling')}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{getDeductionReason(ticketId, 'closing')}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{dsatReason}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">{getDeductionReason(ticketId, 'fatal')}</td>
+                      <td className="px-3 py-2 border border-slate-200 max-w-[280px] truncate" title={feedback}>{feedback}</td>
+                      <td className="px-3 py-2 border border-slate-200 text-center">
+                        {effectiveScore != null ? `${Math.round(effectiveScore)} / 100` : '—'}
+                      </td>
+                      <td className="px-3 py-2 border border-slate-200 text-center font-semibold">
+                        {canAdjust ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                const next = Math.max(0, Math.round(effectiveScore!) - 1);
+                                adjustScoreMutation.mutate({ ticketId, newScore: next });
+                              }}
+                              disabled={isAdjusting || effectiveScore === 0}
+                              className="w-5 h-5 rounded bg-slate-200 hover:bg-uh-error/20 text-slate-600 flex items-center justify-center disabled:opacity-40 transition-colors"
+                              title="Decrease score by 1"
+                            >
+                              <Minus size={10} />
+                            </button>
+                            <div className="min-w-[52px] text-center">
+                              {isAdjusting ? (
+                                <Loader2 size={12} className="animate-spin inline text-uh-purple" />
+                              ) : (
+                                <>
+                                  <span className={hasOverride ? 'text-uh-warning' : ''}>{Math.round(effectiveScore!)} / 100</span>
+                                  {hasOverride && originalScore != null && (
+                                    <div className="text-[9px] text-slate-400 leading-tight font-normal">
+                                      orig: {Math.round(originalScore)}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                const next = Math.min(100, Math.round(effectiveScore!) + 1);
+                                adjustScoreMutation.mutate({ ticketId, newScore: next });
+                              }}
+                              disabled={isAdjusting || effectiveScore === 100}
+                              className="w-5 h-5 rounded bg-slate-200 hover:bg-uh-success/20 text-slate-600 flex items-center justify-center disabled:opacity-40 transition-colors"
+                              title="Increase score by 1"
+                            >
+                              <Plus size={10} />
+                            </button>
+                          </div>
+                        ) : (
+                          effectiveScore != null ? `${Math.round(effectiveScore)} / 100` : '—'
+                        )}
+                      </td>
+                      <td className="px-3 py-2 border border-slate-200 max-w-[260px] truncate" title={item.reviewNote || ''}>
+                        {item.reviewNote || 'NA'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

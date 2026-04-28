@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   Users,
@@ -7,24 +7,53 @@ import {
   CalendarCheck,
   Ticket,
   TrendingUp,
-  AlertTriangle,
   Star,
   Frown,
-  Clock,
   CheckCircle,
-  Inbox
+  Inbox,
+  ClipboardCheck,
+  ShieldAlert,
+  Upload,
+  Loader2,
 } from 'lucide-react';
 import DatePicker from '../components/common/DatePicker';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { agentsApi, ticketsApi } from '../api/client';
+import { agentsApi, ticketsApi, dumpApi } from '../api/client';
 import AgentTrendSparkline from '../components/agent/AgentTrendSparkline';
 import { useDateStore } from '../store/dateStore';
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
+
+function formatAgentName(email?: string) {
+  if (!email) return 'Unknown';
+  return email.split('@')[0].replace(/_ext$/, '').replace(/[._]/g, ' ')
+    .split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+function ScoreChip({ score }: { score: number | null }) {
+  if (score === null) return <span className="text-xs text-slate-400">—</span>;
+  const color = score >= 80 ? 'text-uh-success bg-uh-success/10' : score >= 60 ? 'text-uh-warning bg-uh-warning/10' : 'text-uh-error bg-uh-error/10';
+  return <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${color}`}>{score}</span>;
+}
 
 export default function DashboardPage() {
   const { selectedDate, setSelectedDate, dateMode, setDateMode } = useDateStore();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importMsg, setImportMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
-  // Fetch available dates to auto-select the latest
+  const importMutation = useMutation({
+    mutationFn: (file: File) => dumpApi.importXlsx(file, false),
+    onSuccess: (res) => {
+      const d = res.data;
+      setImportMsg({ ok: true, text: `${d.inserted} tickets imported for ${d.date}${d.unknownIds?.length ? ` · ${d.unknownIds.length} unknown IDs` : ''}` });
+      setSelectedDate(d.date);
+      window.setTimeout(() => setImportMsg(null), 6000);
+    },
+    onError: (err: any) => {
+      setImportMsg({ ok: false, text: err.response?.data?.error || err.message || 'Import failed' });
+      window.setTimeout(() => setImportMsg(null), 6000);
+    },
+  });
+
   const { data: datesData, isLoading: datesLoading } = useQuery({
     queryKey: ['dates'],
     queryFn: () => agentsApi.getDates(),
@@ -32,12 +61,9 @@ export default function DashboardPage() {
   });
 
   const latestDate = datesData?.data?.dates?.[0];
-  // Data queries use selectedDate if user picked one, otherwise fall back to latestDate
   const effectiveDate = selectedDate || latestDate || '';
-  // Picker always has a value — shows today as placeholder while dates are loading
   const pickerDate = effectiveDate || new Date().toISOString().slice(0, 10);
 
-  // Auto-select the latest available date if none is selected or if the selected date is outdated
   useEffect(() => {
     if (!latestDate) return;
     const available: string[] = datesData?.data?.dates || [];
@@ -46,13 +72,19 @@ export default function DashboardPage() {
     }
   }, [latestDate, selectedDate, datesData, setSelectedDate]);
 
-  // Fetch daily insights
   const { data: insightsData, isLoading: insightsLoading } = useQuery({
     queryKey: ['insights', effectiveDate, dateMode],
     queryFn: () => ticketsApi.getInsights(effectiveDate, dateMode),
     enabled: !!effectiveDate,
     staleTime: 1000 * 60 * 30,
     gcTime: 1000 * 60 * 60,
+  });
+
+  const { data: auditSummaryData } = useQuery({
+    queryKey: ['audit-summary', effectiveDate, dateMode],
+    queryFn: () => agentsApi.getAuditSummary(effectiveDate, dateMode),
+    enabled: !!effectiveDate,
+    staleTime: 1000 * 60 * 5,
   });
 
   const insights = insightsData?.data || {};
@@ -62,6 +94,10 @@ export default function DashboardPage() {
   const frustratedCustomers = insights.frustratedCustomers || [];
   const bestAgentEmails = bestAgents.map((agent: any) => agent.agentEmail).filter(Boolean);
 
+  const auditSummary = auditSummaryData?.data || { agents: [], overall: {} };
+  const auditAgents: any[] = auditSummary.agents || [];
+  const auditOverall = auditSummary.overall || {};
+
   const { data: trendMapData } = useQuery({
     queryKey: ['agent-qa-trends', bestAgentEmails.join(','), 7],
     queryFn: () => agentsApi.getQATrends(bestAgentEmails, 7),
@@ -69,15 +105,6 @@ export default function DashboardPage() {
     staleTime: 1000 * 60 * 10,
   });
   const trendMap = trendMapData?.data?.trends || {};
-
-  const formatTime = (seconds: number | null) => {
-    if (seconds === null || seconds === undefined) return '-';
-    const num = Number(seconds);
-    if (isNaN(num) || !isFinite(num) || num <= 0) return '-';
-    if (num < 60) return `${Math.round(num)}s`;
-    if (num < 3600) return `${Math.round(num / 60)}m`;
-    return `${(num / 3600).toFixed(1)}h`;
-  };
 
   const isLoading = datesLoading || insightsLoading;
   const hasNoDashboardData =
@@ -92,44 +119,58 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-slate-500 mt-1">
-            Daily support performance overview
-          </p>
+          <p className="text-slate-500 mt-1">Daily support performance overview</p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Date Mode Toggle */}
           <div className="flex items-center bg-slate-100 rounded-xl p-1">
             <button
               onClick={() => setDateMode('initialized')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-all ${
-                dateMode === 'initialized'
-                  ? 'bg-uh-purple text-white'
-                  : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+                dateMode === 'initialized' ? 'bg-uh-purple text-white' : 'text-slate-500 hover:text-slate-900'
               }`}
-              title="Count tickets by when they were created (matches Yellow.ai)"
+              title="Count tickets by when they were created"
             >
-              <Calendar size={14} />
-              <span>Created</span>
+              <Calendar size={14} /><span>Created</span>
             </button>
             <button
               onClick={() => setDateMode('activity')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-all ${
-                dateMode === 'activity'
-                  ? 'bg-uh-purple text-white'
-                  : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+                dateMode === 'activity' ? 'bg-uh-purple text-white' : 'text-slate-500 hover:text-slate-900'
               }`}
               title="Count tickets by when they had activity/resolved"
             >
-              <CalendarCheck size={14} />
-              <span>Activity</span>
+              <CalendarCheck size={14} /><span>Activity</span>
             </button>
           </div>
-          <DatePicker
-            selectedDate={pickerDate}
-            onDateChange={setSelectedDate}
+          <DatePicker selectedDate={pickerDate} onDateChange={setSelectedDate} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) importMutation.mutate(file);
+              e.target.value = '';
+            }}
           />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importMutation.isPending}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm text-slate-600 disabled:opacity-50 transition-all"
+            title="Import xlsx dump — filename must be DD.MM.YY.xlsx"
+          >
+            {importMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+            Import xlsx
+          </button>
         </div>
       </div>
+
+      {importMsg && (
+        <div className={`mb-4 px-4 py-2.5 rounded-xl text-sm ${importMsg.ok ? 'bg-uh-success/10 text-uh-success border border-uh-success/20' : 'bg-uh-error/10 text-uh-error border border-uh-error/20'}`}>
+          {importMsg.text}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="flex items-center justify-center py-20">
@@ -137,8 +178,51 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
-          {/* Summary Stats Row */}
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
+          {/* Audit QA Scores panel */}
+          {auditAgents.length > 0 && (
+            <div className="card mb-6 border border-uh-purple/10">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <ClipboardCheck size={18} className="text-uh-purple" />
+                  <h2 className="text-lg font-semibold">New Daily Order — QA Scores</h2>
+                  <span className="text-xs text-slate-400">({auditOverall.agentCount || 0} agents audited)</span>
+                </div>
+                {auditOverall.avgQaScore != null && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500">Overall avg</span>
+                    <ScoreChip score={auditOverall.avgQaScore} />
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {auditAgents.map((agent: any) => (
+                  <Link
+                    key={agent.agentEmail}
+                    to={`/agent/${encodeURIComponent(agent.agentEmail)}?date=${effectiveDate}&dateMode=${dateMode}`}
+                    className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-slate-100 transition-all group"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{formatAgentName(agent.agentEmail)}</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        {agent.auditedCount}/{agent.sampleSize} audited
+                        {agent.lowScoreCount > 0 && (
+                          <span className="ml-1.5 text-uh-error">· {agent.lowScoreCount} low</span>
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {agent.lowScoreCount > 0 && <ShieldAlert size={13} className="text-uh-error/60" />}
+                      <ScoreChip score={agent.avgQaScore} />
+                      <ChevronRight size={14} className="text-slate-300 group-hover:text-uh-purple transition-colors" />
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Summary Stats Row — 4 cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             <div className="card flex items-center gap-3">
               <div className="p-2.5 rounded-xl bg-uh-purple/20">
                 <Ticket size={20} className="text-uh-purple" />
@@ -175,27 +259,9 @@ export default function DashboardPage() {
                 <p className="text-2xl font-bold">{summary.avgCsat || '-'}</p>
               </div>
             </div>
-            <div className="card flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-uh-cyan/20">
-                <Clock size={20} className="text-uh-cyan" />
-              </div>
-              <div>
-                <p className="text-slate-500 text-xs">Avg Response</p>
-                <p className="text-2xl font-bold">{formatTime(summary.avgResponseTime)}</p>
-              </div>
-            </div>
-            <div className="card flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-uh-error/20">
-                <AlertTriangle size={20} className="text-uh-error" />
-              </div>
-              <div>
-                <p className="text-slate-500 text-xs">Low CSAT</p>
-                <p className="text-2xl font-bold">{summary.lowCsatCount || 0}</p>
-              </div>
-            </div>
           </div>
 
-          {/* Three Column Layout: Top Issues, Best Agents, Frustrated Customers */}
+          {/* Three Column Layout */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
             {/* Top Issues */}
             <div className="card">
@@ -208,16 +274,9 @@ export default function DashboardPage() {
               ) : (
                 <div className="space-y-2">
                   {topIssues.slice(0, 5).map((issue: any) => (
-                    <div
-                      key={issue.category || issue.count}
-                      className="flex items-center justify-between p-2 rounded-lg bg-slate-100"
-                    >
-                      <span className="text-sm truncate flex-1 mr-2">
-                        {issue.category || 'Unknown'}
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-uh-purple/20 text-uh-purple">
-                        {issue.count}
-                      </span>
+                    <div key={issue.category || issue.count} className="flex items-center justify-between p-2 rounded-lg bg-slate-100">
+                      <span className="text-sm truncate flex-1 mr-2">{issue.category || 'Unknown'}</span>
+                      <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-uh-purple/20 text-uh-purple">{issue.count}</span>
                     </div>
                   ))}
                 </div>
@@ -235,12 +294,12 @@ export default function DashboardPage() {
               ) : (
                 <div className="space-y-2">
                   {bestAgents.map((agent: any, idx: number) => (
-                    <BestAgentRow 
-                      key={agent.agentEmail} 
-                      agent={agent} 
-                      idx={idx} 
-                      effectiveDate={effectiveDate} 
-                      dateMode={dateMode} 
+                    <BestAgentRow
+                      key={agent.agentEmail}
+                      agent={agent}
+                      idx={idx}
+                      effectiveDate={effectiveDate}
+                      dateMode={dateMode}
                       trend={trendMap[agent.agentEmail] || []}
                     />
                   ))}
@@ -272,9 +331,7 @@ export default function DashboardPage() {
                           CSAT: {customer.lowestCsat}
                         </span>
                       </div>
-                      <p className="text-xs text-slate-500 truncate" title={customer.subjects}>
-                        {customer.subjects?.split(' | ')[0] || 'No subject'}
-                      </p>
+                      <p className="text-xs text-slate-500 truncate">{customer.subjects?.split(' | ')[0] || 'No subject'}</p>
                     </Link>
                   ))}
                 </div>
@@ -282,7 +339,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Browse agents CTA — agent list lives on the Tickets tab */}
+          {/* Browse agents CTA */}
           <Link
             to={`/tickets?date=${effectiveDate}&dateMode=${dateMode}`}
             className="card flex items-center justify-between bg-gradient-to-r from-uh-purple/5 to-uh-cyan/5 hover:from-uh-purple/10 hover:to-uh-cyan/10 transition-all group"
@@ -301,7 +358,7 @@ export default function DashboardPage() {
 
           {hasNoDashboardData && (
             <p className="text-sm text-slate-500 text-center mt-6 max-w-xl mx-auto">
-              The app is running, but your local backend does not have ticket data yet. Add your Turso credentials or load local data into backend/dev.db to populate the dashboard.
+              The app is running, but your local backend does not have ticket data yet.
             </p>
           )}
         </>
@@ -310,24 +367,10 @@ export default function DashboardPage() {
   );
 }
 
-function BestAgentRow({ agent, idx, effectiveDate, dateMode, trend }: { 
-  agent: any, 
-  idx: number, 
-  effectiveDate: string, 
-  dateMode: string,
-  trend: Array<{ date: string; avgScore: number }>
+function BestAgentRow({ agent, idx, effectiveDate, dateMode, trend }: {
+  agent: any; idx: number; effectiveDate: string; dateMode: string;
+  trend: Array<{ date: string; avgScore: number }>;
 }) {
-  function formatAgentName(email?: string) {
-    if (!email) return 'Unknown Agent';
-    return email
-      .split('@')[0]
-      .replace(/_ext$/, '')
-      .replace(/[._]/g, ' ')
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ');
-  }
-
   return (
     <Link
       to={`/agent/${encodeURIComponent(agent.agentEmail)}?date=${effectiveDate}&dateMode=${dateMode}`}
@@ -339,12 +382,12 @@ function BestAgentRow({ agent, idx, effectiveDate, dateMode, trend }: {
         </span>
         <div className="min-w-0">
           <p className="text-sm truncate font-medium">
-            {formatAgentName(agent.agentEmail)}
+            {agent.agentEmail?.split('@')[0].replace(/_ext$/, '').replace(/[._]/g, ' ')
+              .split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
           </p>
           <p className="text-[10px] text-slate-400">{agent.totalTickets} tickets</p>
         </div>
       </div>
-      
       <div className="flex items-center gap-3 shrink-0">
         <div className="w-12 h-6 opacity-60 group-hover:opacity-100 transition-opacity">
           <AgentTrendSparkline data={trend} height={24} />
@@ -356,5 +399,3 @@ function BestAgentRow({ agent, idx, effectiveDate, dateMode, trend }: {
     </Link>
   );
 }
-
-// Daily Audit Section — shows picks and allows triggering batch analysis
