@@ -2861,5 +2861,216 @@
         "isEndStep": true
       }
     ]
+  },
+  {
+    "title": "Ultrahuman Ring Replacement Policy (Jan 2026)",
+    "caseIdentifier": "User requests ring replacement or queries eligibility for replacement",
+    "description": "Current ring replacement policy (updated Jan 2026). Covers US vs Non-US regions, purchase date cutoff (Oct 21 2025), warranty periods, Certified Renewed (WS) replacements, and escalation rules.",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Determine Region and Purchase Date (Follow This Order)",
+        "description": "Always check in this order: (1) User region, (2) Purchase date, (3) Warranty status, (4) Replacement count, (5) Allowed action",
+        "instructions": [
+          "NEVER promise or imply outcomes before completing all five checks.",
+          "Step 1: Identify user region — US or Non-US.",
+          "Step 2: Check purchase date — before or after October 21, 2025.",
+          "Step 3: Verify warranty status.",
+          "Step 4: Check how many replacements have already been used.",
+          "Step 5: Determine allowed next action based on the policy below."
+        ]
+      },
+      {
+        "id": "step-2-us-pre",
+        "stepNumber": 2,
+        "title": "US Users — Purchased BEFORE October 21, 2025",
+        "description": "Policy P1: Standard warranty applies, up to 3 replacements",
+        "instructions": [
+          "Within standard 1-year warranty: eligible for up to 3 standard replacements.",
+          "UHX Exception: US users who purchased before Oct 21, 2025 AND bought 2-year UHX within 30 days of first activation can be considered for replacement in year 2 — treat as extended warranty, not goodwill.",
+          "Once 3 replacements are exhausted: No WS replacements, no trade-in, no Sales routing. Close politely.",
+          "Out of warranty (including post-UHX period): No replacement of any kind, no trade-in, no escalation. Respond empathetically and close. If user is pushy, loop in SME — they may guide an alternative like refund, but only after approval."
+        ]
+      },
+      {
+        "id": "step-2-us-post",
+        "stepNumber": 3,
+        "title": "US Users — Purchased ON OR AFTER October 21, 2025",
+        "description": "Policy P2: STRICT — No replacements allowed. Retail purchases only.",
+        "instructions": [
+          "THIS IS A STRICT AND SENSITIVE POLICY. NO EXCEPTIONS.",
+          "Applies to retail purchases only.",
+          "NO replacements allowed regardless of warranty status, UHX status, or DOA cases.",
+          "MUST DO: Complete all troubleshooting steps. Route the case to retailer for further support.",
+          "MUST NOT DO: Do not mention replacements. Do not mention warranty support. Do not mention trade-in or repurchase. Do not route to Sales. Do not suggest buying another ring.",
+          "This process is closely monitored. If user reports they cannot get help from retailer, loop in SME — they may suggest routing to Powerplay but only after approval."
+        ]
+      },
+      {
+        "id": "step-3-non-us",
+        "stepNumber": 4,
+        "title": "Non-US Users (All Geographies)",
+        "description": "Policy P3: Up to 6 total replacements (3 standard + 3 Certified Renewed/WS)",
+        "instructions": [
+          "Up to 6 total replacements allowed within warranty + WS period:",
+          "  - 3 standard replacements first",
+          "  - Followed by 3 WS (Certified Renewed/Wabi Sabi) replacements",
+          "Beyond replacement limits: Offer repurchase with trade-in and applicable discounts.",
+          "If user is interested in trade-in: Redirect via Sales Typeform, find request in #scheduled-callbacks, tag sales team with summary.",
+          "If user is not interested: Respond politely and close. Do not route to Sales."
+        ]
+      },
+      {
+        "id": "step-4-ws",
+        "stepNumber": 5,
+        "title": "Certified Renewed (WS / Wabi Sabi) Replacements",
+        "description": "Rules for offering Certified Renewed rings to eligible users",
+        "instructions": [
+          "Maximum 3 Certified Renewed replacements — only for users who exhausted standard replacements or are out of warranty where applicable.",
+          "WS highlights: Rings are fully tested and functional. May have minor cosmetic marks. No additional warranty provided.",
+          "Communication rules: Always use Yellow macro 'replacement_refurbished'. NEVER use the word 'refurbished' with customers.",
+          "Approved copy: 'Thank you so much for your patience while we reviewed your case. Even though your warranty has expired, we'd still like to help. As a goodwill gesture, we can provide you with a Certified Renewed Ultrahuman Ring AIR. The ring has been thoroughly tested and works just like new. It may have very minor cosmetic marks, but this won't affect its performance. Since your warranty has lapsed, this replacement won't carry an additional warranty. Please let us know if you'd like us to go ahead with this!'"
+        ]
+      },
+      {
+        "id": "step-5-ops",
+        "stepNumber": 6,
+        "title": "Operational Checks Before Any Replacement",
+        "description": "Mandatory operational steps — check serial, check OMS visibility, verify activation",
+        "instructions": [
+          "Always check ring serial number in Unified OMS > Replacement Requests to ensure you are NOT creating a replacement for an already-replaced ring.",
+          "US orders without OMS visibility: Do NOT raise manual Typeforms. Escalate to SME or Lead. Refund may be required instead.",
+          "Verification before US replacement: Check ring activation date. If activation is post Oct 21 or DOA, check user time zone in Yellow/Internal > Users. If US timezone, request purchase invoice.",
+          "Refer to Standard Warranty by Country Sheet for country-specific timelines. If a country shows very short warranty (30 days or 3 months), default Ultrahuman warranty of 1 year applies."
+        ]
+      },
+      {
+        "id": "step-6-escalation",
+        "stepNumber": 7,
+        "title": "Handling Frustrated or Escalated Users",
+        "description": "De-escalation approach when user is already irritated",
+        "instructions": [
+          "If the user is already irritated: Do NOT push firmware updates. Do NOT suggest additional troubleshooting.",
+          "If troubleshooting is already complete: Within policy → proceed with replacement. Outside policy → offer WS or trade-in where applicable. Edge cases → loop in SMEs.",
+          "Leave a clear internal note for visibility.",
+          "Keep tone calm, empathetic, and concise.",
+          "ESCALATION RULE: Escalation to leads is ONLY required when agent believes an exception should be made (e.g., 4th replacement, out-of-policy). Clear-cut policy denials do NOT require escalation."
+        ],
+        "isEndStep": true
+      }
+    ]
+  },
+  {
+    "title": "Ring Replacement Process (OMS)",
+    "caseIdentifier": "Processing a ring replacement request on OMS after confirming user eligibility",
+    "description": "Step-by-step process for creating and tracking ring replacements on OMS. Only follow after confirming eligibility under the Ring Replacement Policy.",
+    "category": "ring-issues",
+    "isActive": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "stepNumber": 1,
+        "title": "Confirm Eligibility First",
+        "description": "Never process a replacement without first verifying eligibility",
+        "instructions": [
+          "Confirm user is eligible under the Ring Replacement Policy before proceeding.",
+          "Check replacement count in Unified OMS > Replacement Requests (enter ring serial or UHR number).",
+          "Also check replacement logs within the UHR order on OMS to see total count for that user/order."
+        ]
+      },
+      {
+        "id": "step-2",
+        "stepNumber": 2,
+        "title": "Navigate to Request Replacement on OMS",
+        "description": "Access the replacement flow on OMS",
+        "instructions": [
+          "Go to OMS: Order Management > Ring Orders > 'Request Replacement'.",
+          "URL: ops.ultrahuman.com/admin/ring_orders/collect_replacement_lookup"
+        ]
+      },
+      {
+        "id": "step-3",
+        "stepNumber": 3,
+        "title": "Fill Replacement Details",
+        "description": "Enter serial number, select reason, confirm packaging",
+        "instructions": [
+          "1. Click 'Request Replacement'.",
+          "2. Enter the Serial Number or UHR.",
+          "3. Select the Replacement Reason.",
+          "4. Confirm the correct Packaging Option:",
+          "   - Old packaging with charger",
+          "   - New packaging without charger",
+          "OMS usually auto-selects packaging based on reason, but always double-check manually.",
+          "These reasons will trigger OMS to select old box (ring + charger): incorrect_sku_requested_by_cx, pre_selected_sizing_mismatch, ring_loose_vs_sizing_kit, ring_tight_vs_sizing_kit, ring_lost, wrong_sku_sent, weight_loss_coverage.",
+          "Exception: If user mentions charger is not working or needs replacement charger, manually select old box.",
+          "Manual intervention required: If reason is battery/connection but user is requesting a size change — OMS may choose wrong box.",
+          "5. Review all details.",
+          "6. Do NOT click 'Initiate RTO' inside this flow except for India orders."
+        ]
+      },
+      {
+        "id": "step-4-rto",
+        "stepNumber": 4,
+        "title": "RTO (Return to Origin) Rules",
+        "description": "Correct RTO handling by region",
+        "instructions": [
+          "Do NOT use the inner 'Initiate RTO' checkbox from the replacement page except for India.",
+          "For all other regions where RTO is required, use the outer Initiate RTO flow to select correct courier partner and return type:",
+          "  - Doorstep",
+          "  - Dropzone"
+        ]
+      },
+      {
+        "id": "step-5-types",
+        "stepNumber": 5,
+        "title": "Identify Replacement Type",
+        "description": "Different flows for Manual, Normal, and Retail orders",
+        "instructions": [
+          "MANUAL REPLACEMENT (external orders not through Shopify — email ending @ultrahuman.com or order source shows Manual):",
+          "  - Ask for contact details and address",
+          "  - Edit details on OMS",
+          "  - Process replacement",
+          "  - Share confirmation with user",
+          "NORMAL ORDER REPLACEMENT (internal orders via Ultrahuman on Shopify):",
+          "  - Process replacement on OMS",
+          "  - Share confirmation and CX message with user",
+          "RETAIL ORDER REPLACEMENT (B2B retail orders):",
+          "  - Confirm updated address with retail partner before updating",
+          "  - Do NOT change default email IDs like abhinav+croma@ultrahuman.com (used by Ops for shrink wrap orders)"
+        ]
+      },
+      {
+        "id": "step-6-mcf",
+        "stepNumber": 6,
+        "title": "MCF Orders (Amazon Multi-Channel Fulfillment)",
+        "description": "Special handling for EU/UK orders fulfilled via Amazon MCF",
+        "instructions": [
+          "MCF regions: EU/UK Shopify orders fulfilled through Amazon MCF from local Amazon warehouses.",
+          "For MCF orders, serial number CANNOT be used to locate user details — serial often maps to a dummy/manual order.",
+          "ALWAYS locate and process replacements using the actual user order, NOT the manual order linked to the serial number.",
+          "If serial search shows a manual order (e.g., email format shantnu+amazon-eufba@ultrahuman.com): search using user's purchase email ID to find actual order.",
+          "If needed, ask user for invoice (will be from Ultrahuman) — use Shopify order ID to search OMS.",
+          "All replacements must be processed on the actual Shopify order, not the manual order.",
+          "Before RTO for MCF: OMS will prompt for actual ring serial number, not dummy serial (e.g., RA-AMZ-MCF-W9-AA05-A00). Enter the correct user serial number."
+        ]
+      },
+      {
+        "id": "step-7-confirm",
+        "stepNumber": 7,
+        "title": "User Confirmation and Post-Processing",
+        "description": "Communicate outcome and handle change requests",
+        "instructions": [
+          "After processing, share the CX message present at the bottom of the replacement flow with the user. Customise the message to avoid sounding robotic.",
+          "CHANGE REQUESTS AFTER REPLACEMENT IS PROCESSED:",
+          "  Size/Colour change — if status is still 'replacement_due': change it and inform Ops on #ring_size_edit_notifs. If already allocated: flag Ops on #cx-ops-escalations, tag Cyril and Harshita, check feasibility.",
+          "  Address change — if status is still 'replacement_due': change it and inform Ops on #ring_size_edit_notifs. If already allocated: flag Ops on #cx-ops-escalations, tag Cyril and Harshitha, check feasibility.",
+          "IDENTIFYING SHOPIFY STORE: USA______ = Stelcore X Shopify. US_____ = Global Shopify. EU/EUK_____ = EU UK Shopify. UAE = Ultrahuman UAE Shopify. Number only orders = Ultrahuman."
+        ],
+        "isEndStep": true
+      }
+    ]
   }
 ]
