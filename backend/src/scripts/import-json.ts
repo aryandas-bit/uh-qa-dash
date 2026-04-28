@@ -77,15 +77,18 @@ function countMessages(messagesJson: any): { total: number; user: number; agent:
 // ── arg parsing ────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
-const jsonPath = args.find(a => !a.startsWith('--'));
+const jsonPathRaw = args.find(a => !a.startsWith('--'));
 const shouldClear = args.includes('--clear');
 const filterDateIdx = args.indexOf('--date');
 const filterDate: string | null = filterDateIdx !== -1 ? args[filterDateIdx + 1] : null;
 
-if (!jsonPath) {
+if (!jsonPathRaw) {
   console.error('Usage: import-json.ts <path-to-json> [--clear] [--date YYYY-MM-DD]');
   process.exit(1);
 }
+
+const jsonPath: string = jsonPathRaw;
+
 if (!fs.existsSync(jsonPath)) {
   console.error(`File not found: ${jsonPath}`);
   process.exit(1);
